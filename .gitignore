@@ -1,0 +1,31 @@
+# Python byte-compiled files
+__pycache__/
+
+# Environment
+.env
+.env.*
+
+# Logs (do not commit actual logs)
+logs/
+
+# Python
+*.py[cod]
+*.so
+
+# Virtualenv
+venv/
+.env.test
+
+# VSCode
+.vscode/
+
+# Docker
+*.log
+*.pid
+
+# Model files (can be large)
+models/*.pkl
+models/*.bin
+
+# Ignore secrets backup
+secrets/
