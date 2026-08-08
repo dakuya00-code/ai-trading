@@ -1,46 +1,48 @@
 import unittest
 
-from app.main import backtest, health, plan, predict
+from app.main import backtest, collector_status, health, market_snapshot, plan, predict, status
 from app.models import BacktestRequest, MarketSnapshot
 
 
 class ApiTests(unittest.TestCase):
-    def test_health_endpoint(self):
-        body = health()
-        self.assertEqual(body["status"], "ok")
-        self.assertEqual(body["service"], "model_api")
+    def test_health_and_status_endpoints(self):
+        health_body = health()
+        self.assertEqual(health_body['status'], 'ok')
+        self.assertEqual(health_body['service'], 'model_api')
+        status_body = status()
+        self.assertEqual(status_body['health'], 'ok')
+        self.assertIn('collector_mode', status_body)
+        self.assertIn('event_count', status_body)
 
-    def test_plan_endpoint(self):
+    def test_collector_status_and_market_snapshot(self):
+        collector_body = collector_status()
+        self.assertIn('mode', collector_body)
+        snapshot = market_snapshot('005930.KS')
+        self.assertIsInstance(snapshot, MarketSnapshot)
+        self.assertEqual(snapshot.symbol, '005930.KS')
+
+    def test_plan_and_backtest_endpoints(self):
         payload = MarketSnapshot(
-            symbol="005930.KS",
+            symbol='005930.KS',
             price=72000,
             moving_average_short=71500,
             moving_average_long=70000,
             rsi=45,
             sentiment=0.4,
         )
+        pred = predict(payload)
+        self.assertEqual(pred.signal, 'buy')
         body = plan(payload)
-        self.assertEqual(body.signal, "buy")
+        self.assertEqual(body.signal, 'buy')
         self.assertGreater(body.quantity, 0)
-
-    def test_backtest_endpoint(self):
         result = backtest(
             BacktestRequest(
-                snapshots=[
-                    MarketSnapshot(
-                        symbol="005930.KS",
-                        price=72000,
-                        moving_average_short=71500,
-                        moving_average_long=70000,
-                        rsi=45,
-                        sentiment=0.4,
-                    )
-                ]
+                snapshots=[payload]
             )
         )
         self.assertGreaterEqual(result.trades, 0)
         self.assertGreaterEqual(result.initial_cash, 0)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     unittest.main()
