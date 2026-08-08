@@ -77,6 +77,7 @@ def dashboard_html() -> str:
         <div class='pill'>버전 <strong id='serviceVersion'>-</strong></div>
         <div class='pill'>업타임 <strong id='uptime'>-</strong></div>
         <div class='pill'>KST <strong id='kstClock'>-</strong></div>
+        <div class='pill'>WS <strong id='wsState'>연결 대기</strong></div>
       </div>
     </section>
 
@@ -244,7 +245,7 @@ KIS_ACCESS_TOKEN=...
   <div class='toast-host' id='toastHost'></div>
 
   <script>
-    const state = { events: [], lastEventIds: new Set(), latestSnapshot: null, activeTab: 'overview', timer: null };
+    const state = { events: [], lastEventIds: new Set(), latestSnapshot: null, activeTab: 'overview', timer: null, ws: null, wsBackoff: 1500 };
     const kstFormatter = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
     const timeFormatter = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 
@@ -262,6 +263,7 @@ KIS_ACCESS_TOKEN=...
     }
     function setMetric(id, value){ document.getElementById(id).textContent = value; }
     function setBadge(id, text, cls=''){ const el = document.getElementById(id); el.textContent = text; el.className = 'tag' + (cls ? ' ' + cls : ''); }
+    function setWsState(text, cls=''){ const el = document.getElementById('wsState'); if (!el) return; el.textContent = text; el.className = cls ? 'tag ' + cls : 'tag'; }
     function toast(title, body, kind=''){ const host = document.getElementById('toastHost'); const el = document.createElement('div'); el.className = 'toast'; el.innerHTML = `<strong>${title}</strong><div class='muted'>${body}</div>`; if (kind === 'good') el.style.borderColor = 'rgba(34,197,94,.28)'; if (kind === 'warn') el.style.borderColor = 'rgba(245,158,11,.28)'; host.prepend(el); setTimeout(() => el.remove(), 3500); }
     function maybeNotify(title, body){ if (!document.getElementById('notifyToggle').checked) return; if ('Notification' in window && Notification.permission === 'granted') new Notification(title, { body }); else toast(title, body); }
     function clearLog(){ state.events = []; renderEvents(); drawChart(); toast('로그 비우기', '로컬 화면 로그를 비웠습니다.'); }
@@ -286,6 +288,30 @@ KIS_ACCESS_TOKEN=...
       const key = `${event.ts}|${event.kind}|${event.message}`;
       if (state.lastEventIds.has(key)) return false;
       state.lastEventIds.add(key); state.events.unshift(event); if (state.events.length > 120) state.events.length = 120; return true;
+    }
+    function applyLiveEvent(event){
+      if (!event) return;
+      if (event.kind === 'collector' && event.price !== null && event.price !== undefined) {
+        document.getElementById('price').value = event.price;
+        document.getElementById('maShort').value = event.price;
+        document.getElementById('maLong').value = event.price;
+        setBadge('tagAction', '실시간 수집', '');
+      }
+      if (event.kind === 'predict') {
+        setMetric('cardSignal', String(event.signal || '-').toUpperCase());
+        setBadge('tagAction', '예측 수신', '');
+      }
+      if (event.kind === 'order') {
+        if (typeof event.quantity === 'number') setMetric('cardQuantity', String(event.quantity));
+        setBadge('tagAction', '주문 수신', 'good');
+      }
+      if (event.kind === 'fill') {
+        if (typeof event.return_pct === 'number') setMetric('cardReturn', `${event.return_pct}%`);
+        setBadge('tagAction', '체결 수신', 'warn');
+      }
+      if (event.kind === 'system') {
+        setBadge('tagAction', '시스템', '');
+      }
     }
     function renderOverview(status, collector){
       setMetric('cardHealth', status.health || '-');
@@ -379,6 +405,38 @@ KIS_ACCESS_TOKEN=...
         toast('새로고침 실패', String(err), 'warn');
       }
     }
+    async function connectWebSocket(){
+      try {
+        if (state.ws) { try { state.ws.close(); } catch {} }
+        const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+        const ws = new WebSocket(`${scheme}://${location.host}/ws/events`);
+        state.ws = ws;
+        setWsState('연결 중', 'warn');
+        ws.onopen = () => { setWsState('연결됨', 'good'); state.wsBackoff = 1500; };
+        ws.onmessage = (ev) => {
+          try {
+            const packet = JSON.parse(ev.data);
+            const event = packet.event || packet;
+            if (upsertEvent(event)) {
+              applyLiveEvent(event);
+              renderEvents();
+              drawChart();
+              setBadge('tagEvents', String(state.events.length), '');
+            }
+          } catch (err) {
+            console.warn('ws parse error', err);
+          }
+        };
+        ws.onerror = () => setWsState('오류', 'bad');
+        ws.onclose = () => {
+          setWsState('재연결 대기', 'warn');
+          window.setTimeout(() => { if (document.body.contains(document.getElementById('wsState'))) connectWebSocket(); }, state.wsBackoff);
+          state.wsBackoff = Math.min(state.wsBackoff * 1.5, 8000);
+        };
+      } catch (err) {
+        setWsState('실패', 'bad');
+      }
+    }
     async function runPredict(){
       const started = performance.now();
       const { body } = await fetchJson('/predict', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload()) });
@@ -434,6 +492,7 @@ KIS_ACCESS_TOKEN=...
     setInterval(updateClock, 1000);
     updateClock();
     refreshAll(true);
+    connectWebSocket();
     if (state.timer) clearInterval(state.timer);
     state.timer = setInterval(() => { if (document.getElementById('autoRefresh').checked) refreshAll(false); }, Number(document.getElementById('refreshEvery').value) * 1000);
     document.getElementById('refreshEvery').addEventListener('change', () => { clearInterval(state.timer); state.timer = setInterval(() => { if (document.getElementById('autoRefresh').checked) refreshAll(false); }, Number(document.getElementById('refreshEvery').value) * 1000); });

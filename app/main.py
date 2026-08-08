@@ -1,28 +1,44 @@
 from __future__ import annotations
 
+import asyncio
+import os
 from datetime import datetime, timezone
 from time import monotonic
 from typing import Any
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
 from app.dashboard import dashboard_html
 from app.engine import analyze_snapshot, plan_trade, run_backtest
-from app.events import EventStore
+from app.events import RealtimeHub, SQLiteEventStore, TradingEventService
 from app.models import BacktestRequest, BacktestResult, MarketSnapshot, PredictionResponse, TradePlan
 from collector.kis import build_collector_from_env
 
-app = FastAPI(title='ai-trading', version='0.4.0')
+DB_PATH = os.getenv('AI_TRADING_DB_PATH', 'data/ai-trading.db')
+
+app = FastAPI(title='ai-trading', version='0.5.0')
 app.state.started_at = monotonic()
 app.state.started_at_iso = datetime.now(timezone.utc).isoformat()
 app.state.last_backtest_return = None
 app.state.last_signal = None
 app.state.last_quantity = None
 app.state.latest_price = None
-app.state.events = EventStore(maxlen=500)
+app.state.store = SQLiteEventStore(DB_PATH)
+app.state.hub = RealtimeHub()
+app.state.events = TradingEventService(app.state.store, app.state.hub)
 app.state.collector = build_collector_from_env()
 app.state.events.record(kind='system', level='info', message='서비스 시작', source='boot')
+
+
+@app.on_event('startup')
+async def startup_event() -> None:
+    app.state.hub.set_loop(asyncio.get_running_loop())
+
+
+@app.on_event('shutdown')
+async def shutdown_event() -> None:
+    app.state.store.close()
 
 
 def _record_event(**kwargs: Any):
@@ -53,6 +69,7 @@ def status() -> dict[str, Any]:
         'event_count': app.state.events.count(),
         'collector_mode': collector_status['mode'],
         'collector_configured': collector_status['configured'],
+        'db_path': str(app.state.store.path),
     }
 
 
@@ -83,6 +100,22 @@ def events(
     query: str | None = None,
 ) -> list[dict[str, Any]]:
     return app.state.events.list(limit=limit, kind=kind, level=level, query=query)
+
+
+@app.websocket('/ws/events')
+async def ws_events(websocket: WebSocket) -> None:
+    await websocket.accept()
+    queue = app.state.hub.subscribe()
+    try:
+        for event in app.state.events.list(limit=50):
+            await websocket.send_json({'type': 'snapshot', 'event': event})
+        while True:
+            event = await queue.get()
+            await websocket.send_json({'type': 'event', 'event': event})
+    except WebSocketDisconnect:
+        pass
+    finally:
+        app.state.hub.unsubscribe(queue)
 
 
 @app.get('/collector/status')

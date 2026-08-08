@@ -8,6 +8,8 @@ AI 기반 자동매매 템플릿입니다. 현재 버전은 **모의(PAPER) 중�
 - 탭 기반 전문형 모니터링 대시보드
 - 실시간 차트
 - 주문·체결 로그 테이블
+- SQLite 영구 저장소
+- WebSocket 실시간 갱신
 - KIS 실연동용 수집기
 - 자동 새로고침 / 필터 / 알림
 - 신호 분석 `/predict`
@@ -30,7 +32,7 @@ docker compose up --build
 
 ## KIS 실연동
 
-실제 KIS 시세를 사용하려면 환경변수를 설정하세요.
+실제 KIS 시세를 사용하려면 **YAML이 아니라 환경변수(.env 또는 shell env)** 로 설정하세요.
 
 ```bash
 KIS_ENABLE_LIVE=1
@@ -40,6 +42,11 @@ KIS_APP_SECRET=...
 KIS_ACCESS_TOKEN=...
 ```
 
+## 데이터 저장
+
+- 주문/체결/수집/예측 이벤트는 `AI_TRADING_DB_PATH` 에 저장됩니다.
+- Docker 기본값은 `/app/data/ai-trading.db` 이며, `./data` 볼륨에 영구 저장됩니다.
+
 ## API
 
 - `GET /`
@@ -48,6 +55,7 @@ KIS_ACCESS_TOKEN=...
 - `GET /version`
 - `GET /collector/status`
 - `GET /events`
+- `GET /ws/events`
 - `GET /market/{symbol}`
 - `GET /health`
 - `POST /predict`
