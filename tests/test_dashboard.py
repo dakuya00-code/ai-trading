@@ -20,3 +20,8 @@ class DashboardTests(TestCase):
         self.assertIn('refreshEvery', html)
         self.assertIn('portfolioPick', html)
         self.assertIn('tagPortfolio', html)
+        self.assertIn('selectedCurrentPrice', html)
+        self.assertIn('selectedUnrealizedPnl', html)
+        self.assertIn('refreshState', html)
+        self.assertIn('marketAwareRefresh', html)
+        self.assertIn('원시 포트폴리오 JSON', html)

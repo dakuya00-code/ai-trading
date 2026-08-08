@@ -23,6 +23,7 @@ docker compose up --build
 - `AI_TRADING_DB_PATH` 는 SQLite 이벤트 DB 경로입니다.
 - `AI_TRADING_PORTFOLIO_PATH` 는 보유종목 JSON 파일 경로입니다.
 - `AI_TRADING_PORTFOLIO_JSON` 로 다종목 포트폴리오를 주입할 수 있습니다.
+- `AI_TRADING_BASIC_AUTH_USER` / `AI_TRADING_BASIC_AUTH_PASSWORD` 로 외부 접속 Basic Auth를 설정합니다.
 - `./data` 디렉토리는 Docker에서 영구 저장소로 마운트됩니다.
 
 ## 화면 구성
@@ -51,6 +52,7 @@ docker compose up --build
 - `GET /ws/events`
 - `GET /market/{symbol}`
 - `GET /health`
+- `GET /` 는 Basic Auth가 켜져 있으면 비밀번호를 묻습니다.
 - `POST /predict`
 - `POST /plan`
 - `POST /backtest`

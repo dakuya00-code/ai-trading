@@ -1,11 +1,34 @@
 import unittest
+from base64 import b64encode
 
+from starlette.testclient import TestClient
+
+from app import main as app_main
 from app.main import app, backtest, collector_status, health, live_portfolio, market_snapshot, plan, portfolio, predict, status
 from app.models import BacktestRequest, MarketSnapshot
 from collector.kis import MockKISCollector
 
 
 class ApiTests(unittest.TestCase):
+
+    def test_basic_auth_protects_public_surface(self):
+        original_enabled = app_main.BASIC_AUTH_ENABLED
+        original_user = app_main.BASIC_AUTH_USER
+        original_password = app_main.BASIC_AUTH_PASSWORD
+        try:
+            app_main.BASIC_AUTH_ENABLED = True
+            app_main.BASIC_AUTH_USER = 'admin'
+            app_main.BASIC_AUTH_PASSWORD = 'secret'
+            client = TestClient(app)
+            response = client.get('/')
+            self.assertEqual(response.status_code, 401)
+            token = b64encode(b'admin:secret').decode()
+            ok = client.get('/', headers={'Authorization': f'Basic {token}'})
+            self.assertEqual(ok.status_code, 200)
+        finally:
+            app_main.BASIC_AUTH_ENABLED = original_enabled
+            app_main.BASIC_AUTH_USER = original_user
+            app_main.BASIC_AUTH_PASSWORD = original_password
     def test_health_and_status_endpoints(self):
         health_body = health()
         self.assertEqual(health_body['status'], 'ok')

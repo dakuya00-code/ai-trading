@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import os
+import secrets
 from datetime import datetime, timezone
 from time import monotonic
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 
 from app.dashboard import dashboard_html
 from app.engine import analyze_snapshot, plan_trade, run_backtest
@@ -29,6 +32,11 @@ from collector.kis import KISLiveCollector, build_collector_from_env
 DB_PATH = os.getenv('AI_TRADING_DB_PATH', 'data/ai-trading.db')
 PORTFOLIO_PATH = os.getenv('AI_TRADING_PORTFOLIO_PATH', 'data/portfolio.json')
 KIS_ACCOUNT_NO = os.getenv('KIS_ACCOUNT_NO', '').strip() or None
+BASIC_AUTH_USER = os.getenv('AI_TRADING_BASIC_AUTH_USER', 'admin').strip() or 'admin'
+BASIC_AUTH_PASSWORD = os.getenv('AI_TRADING_BASIC_AUTH_PASSWORD', '').strip()
+BASIC_AUTH_ENABLED = bool(BASIC_AUTH_PASSWORD)
+BASIC_AUTH_REALM = 'ai-trading'
+PUBLIC_PATHS = {'/health', '/ready', '/version', '/openapi.json', '/docs', '/docs/oauth2-redirect', '/redoc'}
 
 app = FastAPI(title='ai-trading', version='0.7.0')
 app.state.started_at = monotonic()
@@ -43,6 +51,42 @@ app.state.events = TradingEventService(app.state.store, app.state.hub)
 app.state.collector = build_collector_from_env()
 app.state.portfolio = PortfolioStore(PORTFOLIO_PATH)
 app.state.events.record(kind='system', level='info', message='서비스 시작', source='boot')
+
+
+def _auth_challenge() -> PlainTextResponse:
+    return PlainTextResponse(
+        'Authentication required',
+        status_code=401,
+        headers={'WWW-Authenticate': f'Basic realm="{BASIC_AUTH_REALM}"'},
+    )
+
+
+def _is_public_path(path: str) -> bool:
+    return path in PUBLIC_PATHS or path.startswith('/static')
+
+
+def _check_basic_auth(header_value: str) -> bool:
+    if not BASIC_AUTH_ENABLED:
+        return True
+    if not header_value.startswith('Basic '):
+        return False
+    try:
+        decoded = base64.b64decode(header_value[6:], validate=True).decode('utf-8')
+    except (binascii.Error, UnicodeDecodeError):
+        return False
+    username, sep, password = decoded.partition(':')
+    if not sep:
+        return False
+    return secrets.compare_digest(username, BASIC_AUTH_USER) and secrets.compare_digest(password, BASIC_AUTH_PASSWORD)
+
+
+@app.middleware('http')
+async def basic_auth_middleware(request, call_next):
+    if not BASIC_AUTH_ENABLED or _is_public_path(request.url.path):
+        return await call_next(request)
+    if not _check_basic_auth(request.headers.get('authorization', '')):
+        return _auth_challenge()
+    return await call_next(request)
 
 
 @app.on_event('startup')

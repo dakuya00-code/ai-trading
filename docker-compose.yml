@@ -16,6 +16,8 @@ services:
       KIS_APP_SECRET: ${KIS_APP_SECRET:-}
       KIS_ACCESS_TOKEN: ${KIS_ACCESS_TOKEN:-}
       KIS_ACCOUNT_NO: ${KIS_ACCOUNT_NO:-}
+      AI_TRADING_BASIC_AUTH_USER: ${AI_TRADING_BASIC_AUTH_USER:-admin}
+      AI_TRADING_BASIC_AUTH_PASSWORD: ${AI_TRADING_BASIC_AUTH_PASSWORD:-}
     volumes:
       - ./data:/app/data
     restart: unless-stopped

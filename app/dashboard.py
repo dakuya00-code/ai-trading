@@ -38,7 +38,7 @@ def dashboard_html() -> str:
     .grid{display:grid;gap:14px}.metrics{grid-template-columns:repeat(4,minmax(0,1fr))}.two-col{grid-template-columns:1.1fr .9fr}.three-col{grid-template-columns:repeat(3,minmax(0,1fr))}
     .card{border-radius:18px;padding:16px}
     .card h2,.card h3{margin:0 0 10px}.card h2{font-size:16px}.card h3{font-size:14px;color:#cbd5e1}
-    .metric{font-size:28px;font-weight:700;letter-spacing:-.03em;margin:0}.sub{margin:5px 0 0;color:var(--muted);font-size:12px}
+    .metric{font-size:28px;font-weight:700;letter-spacing:-.03em;margin:0}.metric.good{color:var(--good)} .metric.bad{color:var(--bad)}.sub{margin:5px 0 0;color:var(--muted);font-size:12px}
     .toolbar,.form-grid,.filters{display:flex;gap:10px;flex-wrap:wrap}
     .form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.field label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
     .row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;background:rgba(15,23,42,.86);border:1px solid rgba(148,163,184,.14)}
@@ -78,6 +78,7 @@ def dashboard_html() -> str:
         <div class='pill'>업타임 <strong id='uptime'>-</strong></div>
         <div class='pill'>KST <strong id='kstClock'>-</strong></div>
         <div class='pill'>WS <strong id='wsState'>연결 대기</strong></div>
+        <div class='pill'>새로고침 <strong id='refreshState'>-</strong></div>
       </div>
     </section>
 
@@ -155,11 +156,6 @@ def dashboard_html() -> str:
                 <h2 style='margin:0'>보유현황</h2>
                 <div class='muted' style='font-size:12px;margin-top:4px;'>보유종목이 여러 개면 여기서 한 번에 평가금액과 손익을 봅니다.</div>
               </div>
-              <div class='toolbar'>
-                <div class='field' style='min-width:220px'><label>보유종목 선택</label><select id='portfolioPick'></select></div>
-                <button class='btn ghost' type='button' onclick='syncSelectedPortfolio()'>입력패널로 복사</button>
-                <button class='btn ghost' type='button' onclick='refreshPortfolio()'>포트폴리오 새로고침</button>
-              </div>
             </div>
             <div class='grid metrics' style='margin-top:12px;grid-template-columns:repeat(4,minmax(0,1fr));'>
               <div class='card' style='padding:14px'><h3>보유종목 수</h3><p class='metric' id='portfolioCount'>-</p></div>
@@ -175,8 +171,32 @@ def dashboard_html() -> str:
             </div>
           </section>
           <section class='card'>
-            <h2>보유종목 입력</h2>
-            <div class='muted' style='font-size:12px;margin-bottom:10px;'>실제 계좌 연동 전에는 이 화면에서 보유종목을 저장/수정해 둘 수 있습니다.</div>
+            <div class='toolbar' style='align-items:flex-start;'>
+              <div>
+                <h2 style='margin-bottom:4px;'>선택 종목 상세</h2>
+                <div class='muted' style='font-size:12px;'>현재가·평가손익을 큰 숫자로 보여줍니다.</div>
+              </div>
+              <span class='tag' id='selectedHoldingTag'>선택 대기</span>
+            </div>
+            <div class='grid metrics' style='margin-top:12px;grid-template-columns:repeat(2,minmax(0,1fr));'>
+              <div class='card' style='padding:14px'><h3>현재가</h3><p class='metric' id='selectedCurrentPrice'>-</p><p class='sub' id='selectedHoldingName'>선택 종목 없음</p></div>
+              <div class='card' style='padding:14px'><h3>평가손익</h3><p class='metric' id='selectedUnrealizedPnl'>-</p><p class='sub'>손익 금액</p></div>
+              <div class='card' style='padding:14px'><h3>손익률</h3><p class='metric' id='selectedUnrealizedPnlPct'>-</p><p class='sub'>수익률</p></div>
+              <div class='card' style='padding:14px'><h3>평가금액</h3><p class='metric' id='selectedMarketValue'>-</p><p class='sub'>보유 평가액</p></div>
+            </div>
+            <div class='toolbar' style='margin-top:12px;align-items:end;'>
+              <div class='field' style='min-width:220px'><label>보유종목 선택</label><select id='portfolioPick'></select></div>
+              <div class='toolbar'>
+                <button class='btn ghost' type='button' onclick='syncSelectedPortfolio()'>입력패널로 복사</button>
+                <button class='btn ghost' type='button' onclick='refreshPortfolio()'>포트폴리오 새로고침</button>
+              </div>
+            </div>
+            <details style='margin-top:12px;'>
+              <summary class='tag'>원시 포트폴리오 JSON</summary>
+              <pre id='portfolioOutput' style='margin-top:12px;'>포트폴리오 상태를 불러오는 중입니다.</pre>
+            </details>
+            <h3 style='margin:14px 0 10px;'>보유종목 입력</h3>
+            <div class='muted' style='font-size:12px;margin-bottom:10px;'>실제 계좌 연동 전에는 이 화면에서 보유종목을 저장·수정할 수 있습니다.</div>
             <div class='form-grid'>
               <div class='field'><label>종목코드</label><input id='portfolioSymbol' placeholder='예: 005930.KS'></div>
               <div class='field'><label>명칭</label><input id='portfolioName' placeholder='삼성전자'></div>
@@ -190,7 +210,6 @@ def dashboard_html() -> str:
               <button class='btn ghost' type='button' onclick='deletePortfolioPosition()'>삭제</button>
               <button class='btn ghost' type='button' onclick='refreshPortfolio()'>새로고침</button>
             </div>
-            <pre id='portfolioOutput' style='margin-top:12px;'>포트폴리오 상태를 불러오는 중입니다.</pre>
           </section>
         </div>
       </section>
@@ -250,7 +269,7 @@ def dashboard_html() -> str:
               <button class='btn good' type='button' onclick='loadLiveSnapshot()'>시세 불러오기</button>
               <button class='btn ghost' type='button' onclick='refreshAll(true)'>수집기 상태</button>
             </div>
-            <pre id='collectorOutput' style='margin-top:12px;'>아직 수집기 상태를 확인하지 않았습니다.</pre>
+            <details><summary class='tag'>수집기 JSON</summary><pre id='collectorOutput' style='margin-top:12px;'>아직 수집기 상태를 확인하지 않았습니다.</pre></details>
           </section>
           <section class='card'>
             <h2>실연동 안내</h2>
@@ -273,8 +292,8 @@ KIS_ACCESS_TOKEN=...
             <h2>자동 새로고침 / 알림</h2>
             <div class='toolbar'>
               <label class='pill'><input id='autoRefresh' type='checkbox' checked style='width:auto;margin:0 8px 0 0;'>자동 새로고침</label>
-              <label class='pill'><input id='notifyToggle' type='checkbox' style='width:auto;margin:0 8px 0 0;'>브라우저 알림</label>
-              <label class='pill'>간격 <input id='refreshEvery' type='number' min='5' value='15' style='width:80px;margin-left:8px'></label>
+              <label class='pill'><input id='marketAwareRefresh' type='checkbox' checked style='width:auto;margin:0 8px 0 0;'>장중 가변 간격</label>
+              <label class='pill'>기준 간격 <input id='refreshEvery' type='number' min='5' value='10' style='width:80px;margin-left:8px'></label>
             </div>
             <div class='toolbar' style='margin-top:12px;'>
               <button class='btn ghost' type='button' onclick='requestNotificationPermission()'>알림 권한 요청</button>
@@ -283,7 +302,7 @@ KIS_ACCESS_TOKEN=...
           </section>
           <section class='card'>
             <h2>API 상태</h2>
-            <pre id='statusOutput'>대기 중</pre>
+            <details><summary class='tag'>상태 요약 JSON</summary><pre id='statusOutput' style='margin-top:12px;'>대기 중</pre></details>
           </section>
         </div>
       </section>
@@ -318,6 +337,25 @@ KIS_ACCESS_TOKEN=...
     function maybeNotify(title, body){ if (!document.getElementById('notifyToggle').checked) return; if ('Notification' in window && Notification.permission === 'granted') new Notification(title, { body }); else toast(title, body); }
     function money(value){ return new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 0 }).format(Number(value || 0)); }
     function pct(value){ return `${Number(value || 0).toFixed(2)}%`; }
+    function refreshLabel(ms){
+      const sec = Math.max(1, Math.round(ms / 1000));
+      document.getElementById('refreshState').textContent = `${sec}s`;
+    }
+    function isMarketHoursKst(now = new Date()) {
+      const minutes = (now.getUTCHours() * 60 + now.getUTCMinutes() + 9 * 60) % 1440;
+      return minutes >= 9 * 60 && minutes < (15 * 60 + 30);
+    }
+    function getRefreshIntervalMs(){
+      const base = Math.max(5, Number(document.getElementById('refreshEvery').value || 10)) * 1000;
+      if (!document.getElementById('marketAwareRefresh').checked) return base;
+      return isMarketHoursKst() ? Math.min(base, 10000) : Math.max(base, 60000);
+    }
+    function scheduleRefreshTimer(){
+      if (state.timer) clearInterval(state.timer);
+      const interval = getRefreshIntervalMs();
+      refreshLabel(interval);
+      state.timer = setInterval(() => { if (document.getElementById('autoRefresh').checked) refreshAll(false); }, interval);
+    }
     function clearLog(){ state.events = []; renderEvents(); drawChart(); toast('로그 비우기', '로컬 화면 로그를 비웠습니다.'); }
     function setActiveTab(tab){ state.activeTab = tab; document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tab)); document.querySelectorAll('.tab-pane').forEach(p => p.classList.toggle('active', p.id === `tab-${tab}`)); }
     document.querySelectorAll('.tab-btn').forEach(btn => btn.addEventListener('click', () => setActiveTab(btn.dataset.tab)));
@@ -365,6 +403,35 @@ KIS_ACCESS_TOKEN=...
         setBadge('tagAction', '시스템', '');
       }
     }
+    function renderSelectedHolding(row){
+      const title = document.getElementById('selectedHoldingName');
+      const tag = document.getElementById('selectedHoldingTag');
+      const currentPrice = document.getElementById('selectedCurrentPrice');
+      const pnl = document.getElementById('selectedUnrealizedPnl');
+      const pnlPct = document.getElementById('selectedUnrealizedPnlPct');
+      const marketValue = document.getElementById('selectedMarketValue');
+      if (!row) {
+        title.textContent = '선택 종목 없음';
+        tag.textContent = '선택 대기';
+        currentPrice.textContent = '-';
+        pnl.textContent = '-';
+        pnlPct.textContent = '-';
+        marketValue.textContent = '-';
+        return;
+      }
+      const pnlClass = row.unrealized_pnl >= 0 ? 'good' : 'bad';
+      const source = state.portfolio?.source || 'local';
+      title.textContent = `${row.name || row.symbol} · ${row.symbol}`;
+      tag.textContent = source === 'kis-live' ? '실계좌' : '로컬';
+      tag.className = `tag ${source === 'kis-live' ? 'good' : ''}`;
+      currentPrice.textContent = money(row.current_price);
+      pnl.textContent = `${money(row.unrealized_pnl)}원`;
+      pnl.className = `metric ${pnlClass}`;
+      pnlPct.textContent = pct(row.unrealized_pnl_pct);
+      pnlPct.className = `metric ${pnlClass}`;
+      marketValue.textContent = money(row.market_value);
+      marketValue.className = 'metric';
+    }
     function renderPortfolio(summary){
       state.portfolio = summary;
       setMetric('portfolioCount', String(summary.positions_count ?? 0));
@@ -378,6 +445,7 @@ KIS_ACCESS_TOKEN=...
       if (!rows.length) {
         select.innerHTML = `<option value=''>보유종목 없음</option>`;
         document.getElementById('portfolioBody').innerHTML = `<tr><td colspan='9' class='muted'>보유종목이 없습니다.</td></tr>`;
+        renderSelectedHolding(null);
         return;
       }
       select.innerHTML = rows.map(row => `<option value='${row.symbol}'>${row.name || row.symbol} · ${row.symbol}</option>`).join('');
@@ -386,15 +454,19 @@ KIS_ACCESS_TOKEN=...
         return `<tr data-symbol='${row.symbol}'><td><strong>${row.symbol}</strong></td><td>${row.name || '-'}</td><td>${row.quantity}</td><td>${money(row.avg_price)}</td><td>${money(row.current_price)}</td><td>${money(row.market_value)}</td><td><span class='tag ${pnlClass}'>${money(row.unrealized_pnl)}원</span></td><td><span class='tag ${pnlClass}'>${pct(row.unrealized_pnl_pct)}</span></td><td>${row.memo || row.sector || '-'}</td></tr>`;
       }).join('');
       document.getElementById('portfolioBody').innerHTML = body;
-      select.value = rows[0].symbol;
-      if (!document.getElementById('symbol').value) document.getElementById('symbol').value = rows[0].symbol;
-      if (!document.getElementById('collectorSymbol').value) document.getElementById('collectorSymbol').value = rows[0].symbol;
+      select.value = select.value && rows.some(row => row.symbol === select.value) ? select.value : rows[0].symbol;
+      const selected = rows.find(row => row.symbol === select.value) || rows[0];
+      renderSelectedHolding(selected);
+      if (!document.getElementById('symbol').value) document.getElementById('symbol').value = selected.symbol;
+      if (!document.getElementById('collectorSymbol').value) document.getElementById('collectorSymbol').value = selected.symbol;
     }
     function syncSelectedPortfolio(){
       const pick = document.getElementById('portfolioPick').value;
       if (!pick) { toast('선택 없음', '먼저 보유종목을 선택하세요.', 'warn'); return; }
       document.getElementById('symbol').value = pick;
       document.getElementById('collectorSymbol').value = pick;
+      const row = (state.portfolio?.positions || []).find((item) => item.symbol === pick);
+      renderSelectedHolding(row || null);
       toast('입력패널 반영', `${pick}로 입력패널을 채웠습니다.`, 'good');
     }
     async function savePortfolioPosition(){
@@ -514,6 +586,7 @@ KIS_ACCESS_TOKEN=...
         setBadge('tagLatency', `${statusRes.elapsed}ms`, '');
         document.getElementById('tagAuto').textContent = document.getElementById('autoRefresh').checked ? 'ON' : 'OFF';
         document.getElementById('tagNotify').textContent = document.getElementById('notifyToggle').checked ? 'ON' : 'OFF';
+        refreshLabel(getRefreshIntervalMs());
         if (manual) toast('새로고침', `상태, 포트폴리오, 이벤트를 갱신했습니다. (${newCount}개)`);
       } catch (err) {
         document.getElementById('healthDot').className = 'dot bad';
@@ -600,7 +673,8 @@ KIS_ACCESS_TOKEN=...
       }
     }
     function requestNotificationPermission(){ if (!('Notification' in window)) return toast('알림', '브라우저가 알림 API를 지원하지 않습니다.'); Notification.requestPermission(); }
-    document.getElementById('autoRefresh').addEventListener('change', () => { document.getElementById('tagAuto').textContent = document.getElementById('autoRefresh').checked ? 'ON' : 'OFF'; });
+    document.getElementById('autoRefresh').addEventListener('change', () => { document.getElementById('tagAuto').textContent = document.getElementById('autoRefresh').checked ? 'ON' : 'OFF'; scheduleRefreshTimer(); });
+    document.getElementById('marketAwareRefresh').addEventListener('change', scheduleRefreshTimer);
     document.getElementById('notifyToggle').addEventListener('change', () => { document.getElementById('tagNotify').textContent = document.getElementById('notifyToggle').checked ? 'ON' : 'OFF'; });
     document.getElementById('logKind').addEventListener('change', renderEvents);
     document.getElementById('logQuery').addEventListener('input', renderEvents);
@@ -612,9 +686,8 @@ KIS_ACCESS_TOKEN=...
     updateClock();
     refreshAll(true);
     connectWebSocket();
-    if (state.timer) clearInterval(state.timer);
-    state.timer = setInterval(() => { if (document.getElementById('autoRefresh').checked) refreshAll(false); }, Number(document.getElementById('refreshEvery').value) * 1000);
-    document.getElementById('refreshEvery').addEventListener('change', () => { clearInterval(state.timer); state.timer = setInterval(() => { if (document.getElementById('autoRefresh').checked) refreshAll(false); }, Number(document.getElementById('refreshEvery').value) * 1000); });
+    scheduleRefreshTimer();
+    document.getElementById('refreshEvery').addEventListener('change', scheduleRefreshTimer);
     drawChart();
   </script>
 </body>
