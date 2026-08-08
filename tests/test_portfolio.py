@@ -2,7 +2,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from app.portfolio import PortfolioPosition, PortfolioStore
+from app.portfolio import PortfolioPosition, PortfolioStore, summary_from_live_holdings
 from collector.kis import MockKISCollector
 
 
@@ -26,6 +26,27 @@ class PortfolioTests(unittest.TestCase):
             reopened = PortfolioStore(path)
             symbols = {pos.symbol for pos in reopened.list()}
             self.assertIn('005930.KS', symbols)
+
+    def test_live_holdings_summary_parses_kis_rows(self):
+        payload = {
+            'holdings': [
+                {
+                    'pdno': '005930',
+                    'prdt_name': '삼성전자',
+                    'hldg_qty': '10',
+                    'pchs_avg_pric': '70000',
+                    'prpr': '72000',
+                    'evlu_amt': '720000',
+                    'pchs_amt': '700000',
+                    'evlu_pfls_amt': '20000',
+                    'evlu_pfls_rt': '2.86',
+                }
+            ]
+        }
+        summary = summary_from_live_holdings(payload)
+        self.assertEqual(summary.positions_count, 1)
+        self.assertEqual(summary.source, 'kis-live')
+        self.assertEqual(summary.positions[0].symbol, '005930')
 
 
 if __name__ == '__main__':

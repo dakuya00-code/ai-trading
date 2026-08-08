@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-import statistics
-import urllib.error
+import time
 import urllib.parse
 import urllib.request
 from collections import defaultdict, deque
@@ -12,6 +11,21 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.models import MarketSnapshot
+
+
+def _default_headers() -> dict[str, str]:
+    return {
+        'Content-Type': 'application/json',
+        'Accept': 'text/plain',
+        'charset': 'UTF-8',
+        'User-Agent': os.getenv('KIS_USER_AGENT', 'Mozilla/5.0'),
+    }
+
+
+def _balance_tr_id(base_url: str) -> str:
+    if os.getenv('KIS_BALANCE_TR_ID'):
+        return os.getenv('KIS_BALANCE_TR_ID', '')
+    return 'TTTC8434R' if 'openapi.koreainvestment.com' in base_url else 'VTTC8434R'
 
 
 def _is_stock_symbol(symbol: str) -> str:
@@ -53,6 +67,33 @@ def _simple_rsi(values: list[float], window: int = 14) -> float | None:
         return 100.0
     rs = avg_gain / avg_loss
     return round(100 - (100 / (1 + rs)), 2)
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    if value in (None, ''):
+        return default
+    try:
+        return float(str(value).replace(',', '').strip())
+    except Exception:
+        return default
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    if value in (None, ''):
+        return default
+    try:
+        return int(float(str(value).replace(',', '').strip()))
+    except Exception:
+        return default
+
+
+def _account_parts(account_no: str) -> tuple[str, str]:
+    raw = account_no.strip().replace(' ', '')
+    if '-' in raw:
+        cano, prdt = raw.split('-', 1)
+    else:
+        cano, prdt = raw, os.getenv('KIS_ACCOUNT_PRDT_CD', '01')
+    return cano, prdt
 
 
 @dataclass(slots=True)
@@ -140,36 +181,71 @@ class KISLiveCollector:
             f'{self.base_url}/oauth2/tokenP',
             data=payload,
             method='POST',
-            headers={'Content-Type': 'application/json'},
+            headers=_default_headers(),
         )
-        with urllib.request.urlopen(req, timeout=15) as res:
-            data = json.loads(res.read().decode('utf-8'))
-        token = data.get('access_token') or data.get('accessToken')
-        if not token:
-            raise RuntimeError('KIS 토큰 응답에 access_token이 없습니다.')
-        self.access_token = token
-        return token
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                with urllib.request.urlopen(req, timeout=15) as res:
+                    data = json.loads(res.read().decode('utf-8'))
+                token = data.get('access_token') or data.get('accessToken')
+                if not token:
+                    raise RuntimeError('KIS 토큰 응답에 access_token이 없습니다.')
+                self.access_token = token
+                return token
+            except urllib.error.HTTPError as exc:
+                last_error = exc
+                if exc.code not in {403, 429, 500, 502, 503, 504}:
+                    raise
+                if attempt < 2:
+                    time.sleep(1.5 * (attempt + 1))
+                    continue
+                body = exc.read().decode('utf-8', 'ignore')
+                raise RuntimeError(f'KIS token HTTP {exc.code}: {body[:500]}') from exc
+        if last_error:
+            raise last_error
+        raise RuntimeError('KIS token failed without response')
+
+    def _auth_headers(self, tr_id: str) -> dict[str, str]:
+        token = self._token()
+        return {
+            'Authorization': f'Bearer {token}',
+            'appkey': self.app_key,
+            'appsecret': self.app_secret,
+            'tr_id': tr_id,
+            'custtype': 'P',
+        }
+
+    def _get_json(self, url: str, headers: dict[str, str]) -> dict[str, Any]:
+        merged = _default_headers()
+        merged.update(headers)
+        req = urllib.request.Request(url, headers=merged)
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                with urllib.request.urlopen(req, timeout=15) as res:
+                    return json.loads(res.read().decode('utf-8'))
+            except urllib.error.HTTPError as exc:
+                last_error = exc
+                if exc.code not in {403, 429, 500, 502, 503, 504}:
+                    raise
+                if attempt < 2:
+                    time.sleep(1.5 * (attempt + 1))
+                    continue
+                body = exc.read().decode('utf-8', 'ignore')
+                raise RuntimeError(f'KIS HTTP {exc.code}: {body[:500]}') from exc
+        if last_error:
+            raise last_error
+        raise RuntimeError('KIS request failed without response')
 
     def _fetch_price(self, symbol: str) -> tuple[float, float | None, dict[str, Any]]:
-        token = self._token()
         iscd = _is_stock_symbol(symbol)
         params = urllib.parse.urlencode({
             'fid_cond_mrkt_div_code': _market_div(symbol),
             'fid_input_iscd': iscd,
         })
         url = f'{self.base_url}/uapi/domestic-stock/v1/quotations/inquire-price?{params}'
-        req = urllib.request.Request(
-            url,
-            headers={
-                'Authorization': f'Bearer {token}',
-                'appkey': self.app_key,
-                'appsecret': self.app_secret,
-                'tr_id': os.getenv('KIS_QUOTE_TR_ID', 'FHKST01010100'),
-                'custtype': 'P',
-            },
-        )
-        with urllib.request.urlopen(req, timeout=15) as res:
-            payload = json.loads(res.read().decode('utf-8'))
+        payload = self._get_json(url, self._auth_headers(os.getenv('KIS_QUOTE_TR_ID', 'FHKST01010100')))
         output = payload.get('output') or {}
         price_raw = output.get('stck_prpr') or output.get('last') or output.get('price')
         if price_raw is None:
@@ -180,7 +256,7 @@ class KISLiveCollector:
         return price, volume, payload
 
     def fetch_snapshot(self, symbol: str) -> MarketSnapshot:
-        price, volume, payload = self._fetch_price(symbol)
+        price, volume, _payload = self._fetch_price(symbol)
         history = self._history[symbol]
         history.append(price)
         prices = list(history)
@@ -201,6 +277,48 @@ class KISLiveCollector:
             sentiment=0.0,
             volume=volume,
         )
+
+    def fetch_holdings(self, account_no: str) -> dict[str, Any]:
+        cano, prdt = _account_parts(account_no)
+        params: dict[str, str] = {
+            'CANO': cano,
+            'ACNT_PRDT_CD': prdt,
+            'AFHR_FLPR_YN': 'N',
+            'OFL_YN': '',
+            'INQR_DVSN': os.getenv('KIS_BALANCE_INQR_DVSN', '00'),
+            'UNPR_DVSN': os.getenv('KIS_BALANCE_UNPR_DVSN', '01'),
+            'FUND_STTL_ICLD_YN': 'N',
+            'FNCG_AMT_AUTO_RDPT_YN': 'N',
+            'PRCS_DVSN': '00',
+        }
+        ctx_fk = ''
+        ctx_nk = ''
+        holdings: list[dict[str, Any]] = []
+        summary: dict[str, Any] = {}
+        seen: set[str] = set()
+        for _ in range(20):
+            if ctx_fk:
+                params['CTX_AREA_FK100'] = ctx_fk
+                params['CTX_AREA_NK100'] = ctx_nk
+            query = urllib.parse.urlencode(params)
+            url = f'{self.base_url}/uapi/domestic-stock/v1/trading/inquire-balance?{query}'
+            payload = self._get_json(url, self._auth_headers(_balance_tr_id(self.base_url)))
+            output1 = payload.get('output1') or []
+            output2 = payload.get('output2') or {}
+            if isinstance(output2, list) and output2:
+                output2 = output2[0]
+            summary = output2 if isinstance(output2, dict) else {}
+            for item in output1:
+                symbol = str(item.get('pdno') or item.get('symbol') or '').strip()
+                if not symbol or symbol in seen:
+                    continue
+                seen.add(symbol)
+                holdings.append(item)
+            ctx_fk = str(payload.get('ctx_area_fk100') or '').strip()
+            ctx_nk = str(payload.get('ctx_area_nk100') or '').strip()
+            if not ctx_fk and not ctx_nk:
+                break
+        return {'summary': summary, 'holdings': holdings}
 
 
 def build_collector_from_env() -> MockKISCollector | KISLiveCollector:

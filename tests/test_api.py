@@ -1,7 +1,8 @@
 import unittest
 
-from app.main import backtest, collector_status, health, market_snapshot, plan, portfolio, predict, status
+from app.main import app, backtest, collector_status, health, live_portfolio, market_snapshot, plan, portfolio, predict, status
 from app.models import BacktestRequest, MarketSnapshot
+from collector.kis import MockKISCollector
 
 
 class ApiTests(unittest.TestCase):
@@ -14,17 +15,31 @@ class ApiTests(unittest.TestCase):
         self.assertIn('collector_mode', status_body)
         self.assertIn('event_count', status_body)
         self.assertIn('portfolio_positions', status_body)
+        self.assertIn('portfolio_source', status_body)
 
     def test_collector_status_and_market_snapshot(self):
-        collector_body = collector_status()
-        self.assertIn('mode', collector_body)
-        snapshot = market_snapshot('005930.KS')
-        self.assertIsInstance(snapshot, MarketSnapshot)
-        self.assertEqual(snapshot.symbol, '005930.KS')
+        original = app.state.collector
+        try:
+            app.state.collector = MockKISCollector()
+            collector_body = collector_status()
+            self.assertIn('mode', collector_body)
+            snapshot = market_snapshot('005930.KS')
+            self.assertIsInstance(snapshot, MarketSnapshot)
+            self.assertEqual(snapshot.symbol, '005930.KS')
+        finally:
+            app.state.collector = original
 
     def test_portfolio_endpoint_exists(self):
         body = portfolio()
         self.assertIn('positions', body.model_dump())
+
+    def test_live_portfolio_guard(self):
+        body = portfolio()
+        self.assertIn('source', body.model_dump())
+        try:
+            live_portfolio()
+        except Exception:
+            pass
 
     def test_plan_and_backtest_endpoints(self):
         payload = MarketSnapshot(

@@ -15,6 +15,7 @@ services:
       KIS_APP_KEY: ${KIS_APP_KEY:-}
       KIS_APP_SECRET: ${KIS_APP_SECRET:-}
       KIS_ACCESS_TOKEN: ${KIS_ACCESS_TOKEN:-}
+      KIS_ACCOUNT_NO: ${KIS_ACCOUNT_NO:-}
     volumes:
       - ./data:/app/data
     restart: unless-stopped

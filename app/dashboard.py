@@ -137,6 +137,7 @@ def dashboard_html() -> str:
               </div>
               <div>
                 <div class='row'><span>수집기</span><span class='tag' id='tagCollector'>-</span></div>
+                <div class='row'><span>포트폴리오</span><span class='tag' id='tagPortfolio'>-</span></div>
                 <div class='row'><span>자동 새로고침</span><span class='tag good' id='tagAuto'>ON</span></div>
                 <div class='row'><span>알림</span><span class='tag' id='tagNotify'>OFF</span></div>
                 <div class='row'><span>이벤트</span><span class='tag' id='tagEvents'>0</span></div>
@@ -370,6 +371,7 @@ KIS_ACCESS_TOKEN=...
       setMetric('portfolioMarketValue', money(summary.total_market_value ?? 0));
       setMetric('portfolioPnl', `${money(summary.unrealized_pnl ?? 0)}원`);
       setMetric('portfolioPnlPct', pct(summary.unrealized_pnl_pct ?? 0));
+      setBadge('tagPortfolio', summary.source === 'kis-live' ? '실계좌' : '로컬', summary.source === 'kis-live' ? 'good' : '');
       document.getElementById('portfolioOutput').textContent = JSON.stringify(summary, null, 2);
       const select = document.getElementById('portfolioPick');
       const rows = summary.positions || [];
@@ -433,6 +435,7 @@ KIS_ACCESS_TOKEN=...
       setBadge('tagServer', status.health === 'ok' ? '정상' : '오류', status.health === 'ok' ? 'good' : 'bad');
       setBadge('tagApi', status.event_count > 0 ? '활성' : '대기 중', status.event_count > 0 ? 'good' : '');
       setBadge('tagCollector', collector.mode === 'kis-live' && collector.configured ? '실연동' : '모의', collector.mode === 'kis-live' && collector.configured ? 'good' : '');
+      setBadge('tagPortfolio', status.portfolio_source === 'kis-live' ? '실계좌' : '로컬', status.portfolio_source === 'kis-live' ? 'good' : '');
       setBadge('tagEvents', String(status.event_count || 0), '');
       document.getElementById('statusOutput').textContent = JSON.stringify(status, null, 2);
       document.getElementById('collectorOutput').textContent = JSON.stringify(collector, null, 2);
@@ -492,12 +495,17 @@ KIS_ACCESS_TOKEN=...
     }
     async function refreshAll(manual=false){
       try {
-        const [statusRes, collectorRes, portfolioRes, eventsRes] = await Promise.all([
+        const [statusRes, collectorRes, eventsRes] = await Promise.all([
           fetchJson('/status'),
           fetchJson('/collector/status'),
-          fetchJson('/portfolio'),
           fetchJson(`/events?limit=${document.getElementById('logLimit').value}`)
         ]);
+        let portfolioRes;
+        try {
+          portfolioRes = await fetchJson('/portfolio/live');
+        } catch (liveErr) {
+          portfolioRes = await fetchJson('/portfolio');
+        }
         renderOverview(statusRes.body, collectorRes.body);
         renderPortfolio(portfolioRes.body);
         const newCount = eventsRes.body.filter(ev => upsertEvent(ev)).length;

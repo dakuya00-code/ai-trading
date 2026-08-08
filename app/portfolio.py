@@ -10,6 +10,24 @@ from typing import Any
 from app.models import MarketSnapshot
 
 
+def _num(value: Any, default: float = 0.0) -> float:
+    if value in (None, ''):
+        return default
+    try:
+        return float(str(value).replace(',', '').strip())
+    except Exception:
+        return default
+
+
+def _int(value: Any, default: int = 0) -> int:
+    if value in (None, ''):
+        return default
+    try:
+        return int(float(str(value).replace(',', '').strip()))
+    except Exception:
+        return default
+
+
 @dataclass(slots=True)
 class PortfolioPosition:
     symbol: str
@@ -82,6 +100,7 @@ class PortfolioSummary:
     unrealized_pnl_pct: float = 0.0
     positions_count: int = 0
     updated_at: str | None = None
+    source: str = 'local'
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -92,7 +111,19 @@ class PortfolioSummary:
             'unrealized_pnl_pct': self.unrealized_pnl_pct,
             'positions_count': self.positions_count,
             'updated_at': self.updated_at,
+            'source': self.source,
         }
+
+
+@dataclass(slots=True)
+class PortfolioSnapshotResult:
+    summary: PortfolioSummary
+    source: str
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = self.summary.to_dict()
+        payload['source'] = self.source
+        return payload
 
 
 class PortfolioStore:
@@ -218,4 +249,54 @@ class PortfolioStore:
             unrealized_pnl_pct=pnl_pct,
             positions_count=len(rows),
             updated_at=updated_at,
+            source='local',
         )
+
+
+def summary_from_live_holdings(holdings_payload: dict[str, Any]) -> PortfolioSummary:
+    rows: list[PortfolioRow] = []
+    total_market_value = 0.0
+    total_cost_basis = 0.0
+    holdings = holdings_payload.get('holdings') or []
+    for item in holdings:
+        symbol = str(item.get('pdno') or item.get('symbol') or '').strip()
+        if not symbol:
+            continue
+        name = str(item.get('prdt_name') or item.get('name') or symbol).strip()
+        quantity = _int(item.get('hldg_qty') or item.get('quantity') or item.get('qty'))
+        avg_price = _num(item.get('pchs_avg_pric') or item.get('avg_price') or item.get('buy_price'))
+        current_price = _num(item.get('prpr') or item.get('stck_prpr') or item.get('evlu_pric') or item.get('current_price') or avg_price)
+        market_value = _num(item.get('evlu_amt') or item.get('market_value') or quantity * current_price)
+        cost_basis = _num(item.get('pchs_amt') or item.get('cost_basis') or quantity * avg_price)
+        unrealized_pnl = _num(item.get('evlu_pfls_amt') or item.get('unrealized_pnl') or (market_value - cost_basis))
+        unrealized_pnl_pct = _num(item.get('evlu_pfls_rt') or item.get('unrealized_pnl_pct') or ((unrealized_pnl / cost_basis) * 100 if cost_basis else 0.0))
+        row = PortfolioRow(
+            symbol=symbol,
+            name=name,
+            quantity=quantity,
+            avg_price=avg_price,
+            current_price=current_price,
+            market_value=round(market_value, 2),
+            cost_basis=round(cost_basis, 2),
+            unrealized_pnl=round(unrealized_pnl, 2),
+            unrealized_pnl_pct=round(unrealized_pnl_pct, 2),
+            sector=str(item.get('sector') or ''),
+            memo=str(item.get('memo') or ''),
+            updated_at=datetime.now(timezone.utc).isoformat(),
+        )
+        rows.append(row)
+        total_market_value += row.market_value
+        total_cost_basis += row.cost_basis
+    pnl = round(total_market_value - total_cost_basis, 2)
+    pnl_pct = round((pnl / total_cost_basis) * 100, 2) if total_cost_basis else 0.0
+    updated_at = datetime.now(timezone.utc).isoformat() if rows else None
+    return PortfolioSummary(
+        positions=rows,
+        total_market_value=round(total_market_value, 2),
+        total_cost_basis=round(total_cost_basis, 2),
+        unrealized_pnl=pnl,
+        unrealized_pnl_pct=pnl_pct,
+        positions_count=len(rows),
+        updated_at=updated_at,
+        source='kis-live',
+    )

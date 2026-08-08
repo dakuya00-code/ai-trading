@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from time import monotonic
 from typing import Any
 
-from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
 from app.dashboard import dashboard_html
@@ -23,13 +23,14 @@ from app.models import (
     PredictionResponse,
     TradePlan,
 )
-from app.portfolio import PortfolioPosition, PortfolioStore
-from collector.kis import build_collector_from_env
+from app.portfolio import PortfolioPosition, PortfolioStore, summary_from_live_holdings
+from collector.kis import KISLiveCollector, build_collector_from_env
 
 DB_PATH = os.getenv('AI_TRADING_DB_PATH', 'data/ai-trading.db')
 PORTFOLIO_PATH = os.getenv('AI_TRADING_PORTFOLIO_PATH', 'data/portfolio.json')
+KIS_ACCOUNT_NO = os.getenv('KIS_ACCOUNT_NO', '').strip() or None
 
-app = FastAPI(title='ai-trading', version='0.6.0')
+app = FastAPI(title='ai-trading', version='0.7.0')
 app.state.started_at = monotonic()
 app.state.started_at_iso = datetime.now(timezone.utc).isoformat()
 app.state.last_backtest_return = None
@@ -58,7 +59,21 @@ def _record_event(**kwargs: Any):
     return app.state.events.record(**kwargs)
 
 
-def _portfolio_view() -> PortfolioSummaryResponse:
+def _live_portfolio_available() -> bool:
+    return bool(KIS_ACCOUNT_NO and isinstance(app.state.collector, KISLiveCollector) and app.state.collector.status.configured)
+
+
+def _portfolio_view(source: str = 'auto') -> PortfolioSummaryResponse:
+    if source == 'live' or (source == 'auto' and _live_portfolio_available()):
+        try:
+            live = app.state.collector.fetch_holdings(KIS_ACCOUNT_NO)
+            summary = summary_from_live_holdings(live)
+            return PortfolioSummaryResponse.model_validate(summary.to_dict())
+        except Exception as exc:
+            app.state.collector.status.last_error = str(exc)
+            fallback = app.state.portfolio.snapshot(app.state.collector)
+            fallback.source = 'local-fallback'
+            return PortfolioSummaryResponse.model_validate(fallback.to_dict())
     summary = app.state.portfolio.snapshot(app.state.collector)
     return PortfolioSummaryResponse.model_validate(summary.to_dict())
 
@@ -74,7 +89,7 @@ def status() -> dict[str, Any]:
     hours, rem = divmod(uptime_seconds, 3600)
     minutes, seconds = divmod(rem, 60)
     collector_status = app.state.collector.status.to_dict()
-    portfolio = app.state.portfolio.snapshot(app.state.collector)
+    portfolio = _portfolio_view()
     return {
         'health': 'ok',
         'service': 'ai-trading',
@@ -91,8 +106,11 @@ def status() -> dict[str, Any]:
         'portfolio_positions': portfolio.positions_count,
         'portfolio_value': portfolio.total_market_value,
         'portfolio_pnl': portfolio.unrealized_pnl,
+        'portfolio_source': portfolio.source,
+        'portfolio_live_enabled': _live_portfolio_available(),
         'db_path': str(app.state.store.path),
         'portfolio_path': str(app.state.portfolio.path),
+        'account_no_configured': bool(KIS_ACCOUNT_NO),
     }
 
 
@@ -163,8 +181,20 @@ def market_snapshot(symbol: str) -> MarketSnapshot:
 
 
 @app.get('/portfolio', response_model=PortfolioSummaryResponse)
-def portfolio() -> PortfolioSummaryResponse:
-    return _portfolio_view()
+def portfolio(source: str = Query(default='auto', pattern='^(auto|live|local)$')) -> PortfolioSummaryResponse:
+    return _portfolio_view(source=source)
+
+
+@app.get('/portfolio/local', response_model=PortfolioSummaryResponse)
+def local_portfolio() -> PortfolioSummaryResponse:
+    return _portfolio_view(source='local')
+
+
+@app.get('/portfolio/live', response_model=PortfolioSummaryResponse)
+def live_portfolio() -> PortfolioSummaryResponse:
+    if not _live_portfolio_available():
+        raise HTTPException(status_code=400, detail='KIS 계좌 실연동이 설정되지 않았습니다.')
+    return _portfolio_view(source='live')
 
 
 @app.post('/portfolio/positions', response_model=PortfolioUpsertResponse)
@@ -210,7 +240,7 @@ def refresh_portfolio() -> PortfolioSummaryResponse:
         level='info',
         message=f'포트폴리오 새로고침 {summary.positions_count}종목',
         source='api',
-        meta={'market_value': summary.total_market_value, 'pnl': summary.unrealized_pnl},
+        meta={'market_value': summary.total_market_value, 'pnl': summary.unrealized_pnl, 'source': summary.source},
     )
     return summary
 

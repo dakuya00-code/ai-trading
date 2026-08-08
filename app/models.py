@@ -82,6 +82,7 @@ class PortfolioSummaryResponse(BaseModel):
     unrealized_pnl_pct: float
     positions_count: int
     updated_at: str | None = None
+    source: str = 'local'
 
 
 class PortfolioUpsertResponse(BaseModel):

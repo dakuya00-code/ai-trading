@@ -18,3 +18,5 @@ class DashboardTests(TestCase):
         self.assertIn('chartCanvas', html)
         self.assertIn('autoRefresh', html)
         self.assertIn('refreshEvery', html)
+        self.assertIn('portfolioPick', html)
+        self.assertIn('tagPortfolio', html)

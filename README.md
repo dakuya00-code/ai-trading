@@ -12,12 +12,13 @@ AI 기반 자동매매 템플릿입니다. 현재 버전은 **모의(PAPER) 중�
 - SQLite 영구 저장소
 - WebSocket 실시간 갱신
 - KIS 실연동용 수집기
-- 자동 새로고침 / 필터 / 알림
+- 자동 새로 고침 / 필터 / 알림
 - 신호 분석 `/predict`
 - 주문 계획 `/plan`
 - 간단한 백테스트 `/backtest`
 - 시세 수집 `/market/{symbol}`
 - 포트폴리오 조회 `/portfolio`
+- 실계좌 포트폴리오 조회 `/portfolio/live`
 - 서버 상태 `/status`
 - Docker / docker compose 배포
 
@@ -38,10 +39,12 @@ docker compose up --build
 
 ```bash
 KIS_ENABLE_LIVE=1
-KIS_BASE_URL=https://openapivts.koreainvestment.com:29443
+KIS_BASE_URL=https://openapi.koreainvestment.com:9443
+KIS_ACCOUNT_NO=63767556-01
 KIS_APP_KEY=...
 KIS_APP_SECRET=...
 KIS_ACCESS_TOKEN=...
+KIS_USER_AGENT=HermesTest/1.0
 ```
 
 ## 보유현황 입력
@@ -74,6 +77,8 @@ AI_TRADING_PORTFOLIO_JSON='[
 - `GET /version`
 - `GET /collector/status`
 - `GET /portfolio`
+- `GET /portfolio/local`
+- `GET /portfolio/live`
 - `POST /portfolio/positions`
 - `DELETE /portfolio/positions/{symbol}`
 - `POST /portfolio/refresh`
