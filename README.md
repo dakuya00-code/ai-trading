@@ -1,29 +1,31 @@
 # ai-trading
 
-프로젝트 개요
+AI 기반 자동매매 템플릿입니다. 현재 버전은 **모의(PAPER) 중심**의 최소 실행 가능한 구조를 제공합니다.
 
-이 리포지토리는 AI 기반 자동매매(한국 주식/ETF/선물) 템플릿입니다. 실제 거래에 사용하기 전에 반드시 모의(PAPER) 환경에서 충분히 테스트하세요.
+## 제공 기능
 
-중요 경고
+- FastAPI 기반 API 서버
+- 신호 분석 `/predict`
+- 주문 계획 `/plan`
+- 간단한 백테스트 `/backtest`
+- Docker / docker compose 배포
+- GitHub Actions 빌드 워크플로우
 
-- 절대 실 API 키, 비밀번호, OTP 등을 코드나 커밋에 포함하지 마세요. .env.example만 커밋합니다.
-- 실계좌 전환 전에는 최소 3개월 이상 모의 운용을 권장합니다.
+## 빠른 시작
 
-빠른 시작 (모의 먼저)
+```bash
+cp .env.example .env  # 선택 사항
+docker compose up --build
+```
 
-1. .env.example을 복사하여 .env 파일을 생성하고 필요한 값을 채우세요 (실제 키는 절대 커밋하지 마세요).
-2. docker-compose를 사용하여 서비스를 띄웁니다: docker-compose up --build
-3. model_api가 올라오면 /predict 엔드포인트로 예측을 테스트합니다.
+## API
 
-파일 및 구조 설명
+- `GET /health`
+- `POST /predict`
+- `POST /plan`
+- `POST /backtest`
 
-- collector/: KIS Open API 연동 모듈
-- models/: 피처/학습/추론 서비스
-- agent/: 실시간 루프 및 주문 흐름
-- executor/: 주문 래퍼
-- risk/: 리스크 관리
-- backtest/: 백테스터
-- configs/: 운영 파라미터
-- docs/: 사용법 및 보안 주의사항
+## 주의
 
-더 자세한 실행/테스트 지침은 docs/usage.md를 확인하세요.
+- 실계좌 적용 전에는 모의 환경에서 먼저 검증하세요.
+- 실 API 키, OTP, 비밀번호는 저장소에 커밋하지 마세요.

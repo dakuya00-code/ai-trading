@@ -1,6 +1,7 @@
 import unittest
 
-from app.main import MarketSnapshot, predict_signal
+from app.models import MarketSnapshot
+from app.strategy import predict_signal
 
 
 class PredictionTests(unittest.TestCase):

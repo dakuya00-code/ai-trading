@@ -3,7 +3,6 @@
 ## Local
 
 ```bash
-cp .env.example .env
 pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
@@ -18,3 +17,5 @@ docker compose up --build
 
 - `GET /health`
 - `POST /predict`
+- `POST /plan`
+- `POST /backtest`
