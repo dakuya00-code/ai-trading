@@ -10,6 +10,7 @@ class DashboardTests(TestCase):
         self.assertIn('개요', html)
         self.assertIn('차트', html)
         self.assertIn('주문·체결 로그', html)
+        self.assertIn('보유현황', html)
         self.assertIn('KIS 수집기', html)
         self.assertIn('/events', html)
         self.assertIn('/collector/status', html)

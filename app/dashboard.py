@@ -85,6 +85,7 @@ def dashboard_html() -> str:
       <button class='tab-btn active' data-tab='overview'>개요</button>
       <button class='tab-btn' data-tab='chart'>차트</button>
       <button class='tab-btn' data-tab='logs'>주문·체결 로그</button>
+      <button class='tab-btn' data-tab='portfolio'>보유현황</button>
       <button class='tab-btn' data-tab='collector'>KIS 수집기</button>
       <button class='tab-btn' data-tab='settings'>설정</button>
     </div>
@@ -110,7 +111,7 @@ def dashboard_html() -> str:
               <button class='btn warn' type='button' onclick='runBacktest()'>백테스트</button>
             </div>
             <div class='form-grid' style='margin-top:12px;'>
-              <div class='field'><label>종목코드</label><input id='symbol' value='005930.KS'></div>
+              <div class='field'><label>종목코드</label><input id='symbol' placeholder='예: 005930.KS'></div>
               <div class='field'><label>현재가</label><input id='price' type='number' value='72000'></div>
               <div class='field'><label>단기 이동평균</label><input id='maShort' type='number' value='71500'></div>
               <div class='field'><label>장기 이동평균</label><input id='maLong' type='number' value='70000'></div>
@@ -141,6 +142,54 @@ def dashboard_html() -> str:
                 <div class='row'><span>이벤트</span><span class='tag' id='tagEvents'>0</span></div>
               </div>
             </div>
+          </section>
+        </div>
+      </section>
+
+      <section class='tab-pane' id='tab-portfolio'>
+        <div class='grid two-col'>
+          <section class='card'>
+            <div class='toolbar' style='justify-content:space-between;align-items:center;'>
+              <div>
+                <h2 style='margin:0'>보유현황</h2>
+                <div class='muted' style='font-size:12px;margin-top:4px;'>보유종목이 여러 개면 여기서 한 번에 평가금액과 손익을 봅니다.</div>
+              </div>
+              <div class='toolbar'>
+                <div class='field' style='min-width:220px'><label>보유종목 선택</label><select id='portfolioPick'></select></div>
+                <button class='btn ghost' type='button' onclick='syncSelectedPortfolio()'>입력패널로 복사</button>
+                <button class='btn ghost' type='button' onclick='refreshPortfolio()'>포트폴리오 새로고침</button>
+              </div>
+            </div>
+            <div class='grid metrics' style='margin-top:12px;grid-template-columns:repeat(4,minmax(0,1fr));'>
+              <div class='card' style='padding:14px'><h3>보유종목 수</h3><p class='metric' id='portfolioCount'>-</p></div>
+              <div class='card' style='padding:14px'><h3>총 평가금액</h3><p class='metric' id='portfolioMarketValue'>-</p></div>
+              <div class='card' style='padding:14px'><h3>평가손익</h3><p class='metric' id='portfolioPnl'>-</p></div>
+              <div class='card' style='padding:14px'><h3>손익률</h3><p class='metric' id='portfolioPnlPct'>-</p></div>
+            </div>
+            <div class='table-wrap' style='margin-top:12px;'>
+              <table>
+                <thead><tr><th>종목</th><th>명칭</th><th>수량</th><th>평단</th><th>현재가</th><th>평가금액</th><th>평가손익</th><th>손익률</th><th>비고</th></tr></thead>
+                <tbody id='portfolioBody'><tr><td colspan='9' class='muted'>보유종목이 없습니다.</td></tr></tbody>
+              </table>
+            </div>
+          </section>
+          <section class='card'>
+            <h2>보유종목 입력</h2>
+            <div class='muted' style='font-size:12px;margin-bottom:10px;'>실제 계좌 연동 전에는 이 화면에서 보유종목을 저장/수정해 둘 수 있습니다.</div>
+            <div class='form-grid'>
+              <div class='field'><label>종목코드</label><input id='portfolioSymbol' placeholder='예: 005930.KS'></div>
+              <div class='field'><label>명칭</label><input id='portfolioName' placeholder='삼성전자'></div>
+              <div class='field'><label>수량</label><input id='portfolioQuantity' type='number' min='0' value='0'></div>
+              <div class='field'><label>평단</label><input id='portfolioAvgPrice' type='number' min='0' value='0'></div>
+              <div class='field'><label>섹터</label><input id='portfolioSector' placeholder='반도체'></div>
+              <div class='field'><label>메모</label><input id='portfolioMemo' placeholder='보유 이유 / 비중 메모'></div>
+            </div>
+            <div class='toolbar' style='margin-top:12px;'>
+              <button class='btn good' type='button' onclick='savePortfolioPosition()'>저장</button>
+              <button class='btn ghost' type='button' onclick='deletePortfolioPosition()'>삭제</button>
+              <button class='btn ghost' type='button' onclick='refreshPortfolio()'>새로고침</button>
+            </div>
+            <pre id='portfolioOutput' style='margin-top:12px;'>포트폴리오 상태를 불러오는 중입니다.</pre>
           </section>
         </div>
       </section>
@@ -192,7 +241,7 @@ def dashboard_html() -> str:
           <section class='card'>
             <h2>KIS 실연동 수집기</h2>
             <div class='toolbar'>
-              <div class='field' style='min-width:180px'><label>종목</label><input id='collectorSymbol' value='005930.KS'></div>
+              <div class='field' style='min-width:180px'><label>종목</label><input id='collectorSymbol' placeholder='예: 005930.KS'></div>
               <div class='field' style='min-width:180px'><label>상태</label><select id='collectorMode'><option value='auto'>자동</option><option value='mock'>모의</option><option value='live'>실연동</option></select></div>
               <div class='field' style='min-width:180px'><label>갱신</label><select id='collectorRefresh'><option value='off'>수동</option><option value='on' selected>자동 반영</option></select></div>
             </div>
@@ -245,7 +294,7 @@ KIS_ACCESS_TOKEN=...
   <div class='toast-host' id='toastHost'></div>
 
   <script>
-    const state = { events: [], lastEventIds: new Set(), latestSnapshot: null, activeTab: 'overview', timer: null, ws: null, wsBackoff: 1500 };
+    const state = { events: [], lastEventIds: new Set(), latestSnapshot: null, portfolio: null, activeTab: 'overview', timer: null, ws: null, wsBackoff: 1500 };
     const kstFormatter = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
     const timeFormatter = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 
@@ -266,6 +315,8 @@ KIS_ACCESS_TOKEN=...
     function setWsState(text, cls=''){ const el = document.getElementById('wsState'); if (!el) return; el.textContent = text; el.className = cls ? 'tag ' + cls : 'tag'; }
     function toast(title, body, kind=''){ const host = document.getElementById('toastHost'); const el = document.createElement('div'); el.className = 'toast'; el.innerHTML = `<strong>${title}</strong><div class='muted'>${body}</div>`; if (kind === 'good') el.style.borderColor = 'rgba(34,197,94,.28)'; if (kind === 'warn') el.style.borderColor = 'rgba(245,158,11,.28)'; host.prepend(el); setTimeout(() => el.remove(), 3500); }
     function maybeNotify(title, body){ if (!document.getElementById('notifyToggle').checked) return; if ('Notification' in window && Notification.permission === 'granted') new Notification(title, { body }); else toast(title, body); }
+    function money(value){ return new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 0 }).format(Number(value || 0)); }
+    function pct(value){ return `${Number(value || 0).toFixed(2)}%`; }
     function clearLog(){ state.events = []; renderEvents(); drawChart(); toast('로그 비우기', '로컬 화면 로그를 비웠습니다.'); }
     function setActiveTab(tab){ state.activeTab = tab; document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tab)); document.querySelectorAll('.tab-pane').forEach(p => p.classList.toggle('active', p.id === `tab-${tab}`)); }
     document.querySelectorAll('.tab-btn').forEach(btn => btn.addEventListener('click', () => setActiveTab(btn.dataset.tab)));
@@ -312,6 +363,62 @@ KIS_ACCESS_TOKEN=...
       if (event.kind === 'system') {
         setBadge('tagAction', '시스템', '');
       }
+    }
+    function renderPortfolio(summary){
+      state.portfolio = summary;
+      setMetric('portfolioCount', String(summary.positions_count ?? 0));
+      setMetric('portfolioMarketValue', money(summary.total_market_value ?? 0));
+      setMetric('portfolioPnl', `${money(summary.unrealized_pnl ?? 0)}원`);
+      setMetric('portfolioPnlPct', pct(summary.unrealized_pnl_pct ?? 0));
+      document.getElementById('portfolioOutput').textContent = JSON.stringify(summary, null, 2);
+      const select = document.getElementById('portfolioPick');
+      const rows = summary.positions || [];
+      if (!rows.length) {
+        select.innerHTML = `<option value=''>보유종목 없음</option>`;
+        document.getElementById('portfolioBody').innerHTML = `<tr><td colspan='9' class='muted'>보유종목이 없습니다.</td></tr>`;
+        return;
+      }
+      select.innerHTML = rows.map(row => `<option value='${row.symbol}'>${row.name || row.symbol} · ${row.symbol}</option>`).join('');
+      const body = rows.map(row => {
+        const pnlClass = row.unrealized_pnl >= 0 ? 'good' : 'bad';
+        return `<tr data-symbol='${row.symbol}'><td><strong>${row.symbol}</strong></td><td>${row.name || '-'}</td><td>${row.quantity}</td><td>${money(row.avg_price)}</td><td>${money(row.current_price)}</td><td>${money(row.market_value)}</td><td><span class='tag ${pnlClass}'>${money(row.unrealized_pnl)}원</span></td><td><span class='tag ${pnlClass}'>${pct(row.unrealized_pnl_pct)}</span></td><td>${row.memo || row.sector || '-'}</td></tr>`;
+      }).join('');
+      document.getElementById('portfolioBody').innerHTML = body;
+      select.value = rows[0].symbol;
+      if (!document.getElementById('symbol').value) document.getElementById('symbol').value = rows[0].symbol;
+      if (!document.getElementById('collectorSymbol').value) document.getElementById('collectorSymbol').value = rows[0].symbol;
+    }
+    function syncSelectedPortfolio(){
+      const pick = document.getElementById('portfolioPick').value;
+      if (!pick) { toast('선택 없음', '먼저 보유종목을 선택하세요.', 'warn'); return; }
+      document.getElementById('symbol').value = pick;
+      document.getElementById('collectorSymbol').value = pick;
+      toast('입력패널 반영', `${pick}로 입력패널을 채웠습니다.`, 'good');
+    }
+    async function savePortfolioPosition(){
+      const payload = {
+        symbol: document.getElementById('portfolioSymbol').value.trim(),
+        name: document.getElementById('portfolioName').value.trim(),
+        quantity: Number(document.getElementById('portfolioQuantity').value),
+        avg_price: Number(document.getElementById('portfolioAvgPrice').value),
+        sector: document.getElementById('portfolioSector').value.trim(),
+        memo: document.getElementById('portfolioMemo').value.trim(),
+      };
+      const { body } = await fetchJson('/portfolio/positions', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+      toast('보유종목 저장', `${body.position.symbol} 저장 완료`, 'good');
+      await refreshPortfolio(true);
+    }
+    async function deletePortfolioPosition(){
+      const symbol = document.getElementById('portfolioSymbol').value.trim() || document.getElementById('portfolioPick').value;
+      if (!symbol) { toast('삭제 실패', '삭제할 종목코드가 없습니다.', 'warn'); return; }
+      const { body } = await fetchJson(`/portfolio/positions/${encodeURIComponent(symbol)}`, { method:'DELETE' });
+      toast('보유종목 삭제', body.ok ? `${symbol} 삭제 완료` : `${symbol} 를 찾지 못했습니다.`, body.ok ? 'good' : 'warn');
+      await refreshPortfolio(true);
+    }
+    async function refreshPortfolio(manual=false){
+      const { body } = await fetchJson('/portfolio');
+      renderPortfolio(body);
+      if (manual) toast('포트폴리오', '보유현황을 갱신했습니다.', 'good');
     }
     function renderOverview(status, collector){
       setMetric('cardHealth', status.health || '-');
@@ -385,19 +492,21 @@ KIS_ACCESS_TOKEN=...
     }
     async function refreshAll(manual=false){
       try {
-        const [statusRes, collectorRes, eventsRes] = await Promise.all([
+        const [statusRes, collectorRes, portfolioRes, eventsRes] = await Promise.all([
           fetchJson('/status'),
           fetchJson('/collector/status'),
+          fetchJson('/portfolio'),
           fetchJson(`/events?limit=${document.getElementById('logLimit').value}`)
         ]);
         renderOverview(statusRes.body, collectorRes.body);
+        renderPortfolio(portfolioRes.body);
         const newCount = eventsRes.body.filter(ev => upsertEvent(ev)).length;
         renderEvents();
         drawChart();
         setBadge('tagLatency', `${statusRes.elapsed}ms`, '');
         document.getElementById('tagAuto').textContent = document.getElementById('autoRefresh').checked ? 'ON' : 'OFF';
         document.getElementById('tagNotify').textContent = document.getElementById('notifyToggle').checked ? 'ON' : 'OFF';
-        if (manual) toast('새로고침', `상태와 이벤트를 갱신했습니다. (${newCount}개)`);
+        if (manual) toast('새로고침', `상태, 포트폴리오, 이벤트를 갱신했습니다. (${newCount}개)`);
       } catch (err) {
         document.getElementById('healthDot').className = 'dot bad';
         document.getElementById('healthText').textContent = '서버 오류';
@@ -466,7 +575,8 @@ KIS_ACCESS_TOKEN=...
       await refreshAll();
     }
     async function loadLiveSnapshot(){
-      const symbol = document.getElementById('collectorSymbol').value.trim();
+      const symbol = document.getElementById('collectorSymbol').value.trim() || document.getElementById('portfolioPick').value || document.getElementById('symbol').value.trim();
+      if (!symbol) { toast('종목 없음', '먼저 종목코드나 보유종목을 선택하세요.', 'warn'); return; }
       try {
         const { body } = await fetchJson(`/market/${encodeURIComponent(symbol)}`);
         document.getElementById('price').value = body.price;
@@ -489,6 +599,7 @@ KIS_ACCESS_TOKEN=...
     document.getElementById('logLimit').addEventListener('change', async () => { await refreshAll(true); });
     document.getElementById('chartMetric').addEventListener('change', drawChart);
     document.getElementById('chartWindow').addEventListener('change', drawChart);
+    document.getElementById('portfolioPick').addEventListener('change', syncSelectedPortfolio);
     setInterval(updateClock, 1000);
     updateClock();
     refreshAll(true);

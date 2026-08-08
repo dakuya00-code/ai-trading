@@ -54,3 +54,36 @@ class BacktestResult(BaseModel):
     return_pct: float
     max_drawdown_pct: float
     notes: list[str]
+
+
+class PortfolioPositionRequest(BaseModel):
+    symbol: str = Field(..., min_length=1)
+    name: str = ''
+    quantity: int = Field(..., ge=0)
+    avg_price: float = Field(..., ge=0)
+    sector: str = ''
+    memo: str = ''
+
+
+class PortfolioPositionResponse(PortfolioPositionRequest):
+    current_price: float
+    market_value: float
+    cost_basis: float
+    unrealized_pnl: float
+    unrealized_pnl_pct: float
+    updated_at: str | None = None
+
+
+class PortfolioSummaryResponse(BaseModel):
+    positions: list[PortfolioPositionResponse]
+    total_market_value: float
+    total_cost_basis: float
+    unrealized_pnl: float
+    unrealized_pnl_pct: float
+    positions_count: int
+    updated_at: str | None = None
+
+
+class PortfolioUpsertResponse(BaseModel):
+    ok: bool
+    position: PortfolioPositionResponse

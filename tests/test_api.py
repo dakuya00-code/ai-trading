@@ -1,6 +1,6 @@
 import unittest
 
-from app.main import backtest, collector_status, health, market_snapshot, plan, predict, status
+from app.main import backtest, collector_status, health, market_snapshot, plan, portfolio, predict, status
 from app.models import BacktestRequest, MarketSnapshot
 
 
@@ -13,6 +13,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(status_body['health'], 'ok')
         self.assertIn('collector_mode', status_body)
         self.assertIn('event_count', status_body)
+        self.assertIn('portfolio_positions', status_body)
 
     def test_collector_status_and_market_snapshot(self):
         collector_body = collector_status()
@@ -20,6 +21,10 @@ class ApiTests(unittest.TestCase):
         snapshot = market_snapshot('005930.KS')
         self.assertIsInstance(snapshot, MarketSnapshot)
         self.assertEqual(snapshot.symbol, '005930.KS')
+
+    def test_portfolio_endpoint_exists(self):
+        body = portfolio()
+        self.assertIn('positions', body.model_dump())
 
     def test_plan_and_backtest_endpoints(self):
         payload = MarketSnapshot(
