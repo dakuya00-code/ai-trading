@@ -159,6 +159,24 @@ def _load_watchdog_market_regime() -> dict[str, Any] | None:
     return regime if isinstance(regime, dict) else None
 
 
+def _load_watchdog_available_cash() -> tuple[float | None, str | None]:
+    if not WATCHDOG_STATE_PATH.exists():
+        return None, None
+    try:
+        payload = json.loads(WATCHDOG_STATE_PATH.read_text(encoding='utf-8'))
+    except Exception:
+        return None, None
+    if not isinstance(payload, dict):
+        return None, None
+    cash = payload.get('available_cash')
+    source = payload.get('available_cash_source')
+    try:
+        cash_value = float(cash) if cash is not None else None
+    except Exception:
+        cash_value = None
+    return cash_value, source if isinstance(source, str) else None
+
+
 @app.get('/', response_class=HTMLResponse)
 def dashboard() -> HTMLResponse:
     return HTMLResponse(dashboard_html())
@@ -192,6 +210,8 @@ def status() -> dict[str, Any]:
         'strategy_profile': app.state.strategy_state.strategy_profile,
         'position_multiplier': app.state.strategy_state.position_multiplier,
         'market_regime': _load_watchdog_market_regime(),
+        'available_cash': _load_watchdog_available_cash()[0],
+        'available_cash_source': _load_watchdog_available_cash()[1],
         'db_path': str(app.state.store.path),
         'portfolio_path': str(app.state.portfolio.path),
         'account_no_configured': bool(KIS_ACCOUNT_NO),

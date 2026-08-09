@@ -87,6 +87,34 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _extract_available_cash(summary: dict[str, Any]) -> tuple[float, str | None]:
+    """Best-effort extraction of usable cash from KIS balance summary."""
+    if not isinstance(summary, dict):
+        return 0.0, None
+    candidates = [
+        'ord_psbl_cash',
+        'ord_psbl_amt',
+        'prvs_rcdl_excc_amt',
+        'nxdy_excc_amt',
+        'dnca_tot_amt',
+        'cma_evlu_amt',
+        'cash',
+        'available_cash',
+        'cashable_amount',
+    ]
+    for key in candidates:
+        value = summary.get(key)
+        if value in (None, ''):
+            continue
+        try:
+            amount = float(str(value).replace(',', '').strip())
+        except Exception:
+            continue
+        if amount >= 0:
+            return amount, key
+    return 0.0, None
+
+
 def _account_parts(account_no: str) -> tuple[str, str]:
     raw = account_no.strip().replace(' ', '')
     if '-' in raw:
@@ -318,7 +346,8 @@ class KISLiveCollector:
             ctx_nk = str(payload.get('ctx_area_nk100') or '').strip()
             if not ctx_fk and not ctx_nk:
                 break
-        return {'summary': summary, 'holdings': holdings}
+        available_cash, cash_source = _extract_available_cash(summary)
+        return {'summary': summary, 'holdings': holdings, 'available_cash': available_cash, 'available_cash_source': cash_source}
 
 
 def build_collector_from_env() -> MockKISCollector | KISLiveCollector:

@@ -123,6 +123,10 @@ def _scan_once(collector: KISLiveCollector, broker: KISBroker, account_no: str, 
     reports: list[dict[str, Any]] = []
     holdings_payload = collector.fetch_holdings(account_no)
     holdings = holdings_payload.get('holdings') or []
+    available_cash = float(holdings_payload.get('available_cash') or 0.0)
+    available_cash_source = holdings_payload.get('available_cash_source')
+    state.data['available_cash'] = available_cash
+    state.data['available_cash_source'] = available_cash_source
     holdings_by_symbol = {str(item.get('pdno') or item.get('symbol') or '').strip(): item for item in holdings if str(item.get('pdno') or item.get('symbol') or '').strip()}
     rules = _build_rules(collector, account_no, override_symbols=override_symbols)
     strategy = load_strategy_state()
@@ -178,28 +182,32 @@ def _scan_once(collector: KISLiveCollector, broker: KISBroker, account_no: str, 
     inverse_target_qty = max(0, int(target_inverse_value // max(inverse_snapshot.price, 1e-9)))
 
     if not _market_is_open():
-        reports.append({'symbol': inverse_symbol, 'name': '인버스 헤지', 'price': inverse_snapshot.price, 'triggered': 'market_closed', 'market_regime': regime.to_dict(), 'target_inverse_value': target_inverse_value, 'target_inverse_qty': inverse_target_qty, 'current_inverse_qty': inverse_current_qty})
+        reports.append({'symbol': inverse_symbol, 'name': '인버스 헤지', 'price': inverse_snapshot.price, 'triggered': 'market_closed', 'market_regime': regime.to_dict(), 'available_cash': available_cash, 'available_cash_source': available_cash_source, 'target_inverse_value': target_inverse_value, 'target_inverse_qty': inverse_target_qty, 'current_inverse_qty': inverse_current_qty})
     else:
         if regime.regime == 'bullish' and inverse_current_qty > 0:
             close_plan = TradePlan(symbol=inverse_symbol, signal='sell', quantity=inverse_current_qty, entry_price=inverse_snapshot.price, stop_loss=None, take_profit=None, confidence=0.99, rationale=['시장 강세라 인버스 청산'])
             execution = execute_trade_plan(close_plan, broker=broker)
             state.mark_hedge_closed(inverse_symbol)
-            reports.append({'symbol': inverse_symbol, 'name': '인버스 헤지', 'price': inverse_snapshot.price, 'triggered': 'inverse_close_bullish', 'market_regime': regime.to_dict(), 'execution': execution.to_dict()})
+            reports.append({'symbol': inverse_symbol, 'name': '인버스 헤지', 'price': inverse_snapshot.price, 'triggered': 'inverse_close_bullish', 'market_regime': regime.to_dict(), 'available_cash': available_cash, 'available_cash_source': available_cash_source, 'execution': execution.to_dict()})
         elif regime.regime in {'bearish', 'neutral'}:
             if inverse_target_qty > inverse_current_qty:
                 buy_qty = inverse_target_qty - inverse_current_qty
-                hedge_plan = build_hedge_plan(hedge_symbol=inverse_symbol, target_value=buy_qty * inverse_snapshot.price, hedge_snapshot=inverse_snapshot, reasons=[('시장 약세 인버스 확대' if regime.regime == 'bearish' else '중립 인버스 소액 유지')] + regime.trigger_reasons)
-                hedge_plan.quantity = buy_qty
-                execution = execute_trade_plan(hedge_plan, broker=broker)
-                state.mark_hedge_open(inverse_symbol, {'market_regime': regime.to_dict(), 'target_inverse_value': target_inverse_value, 'target_inverse_qty': inverse_target_qty, 'execution': execution.to_dict()})
-                reports.append({'symbol': inverse_symbol, 'name': '인버스 헤지', 'price': inverse_snapshot.price, 'triggered': 'inverse_buy', 'market_regime': regime.to_dict(), 'execution': execution.to_dict()})
+                cash_limited_qty = min(buy_qty, int(available_cash // max(inverse_snapshot.price, 1e-9))) if available_cash > 0 else 0
+                if cash_limited_qty > 0:
+                    hedge_plan = build_hedge_plan(hedge_symbol=inverse_symbol, target_value=cash_limited_qty * inverse_snapshot.price, hedge_snapshot=inverse_snapshot, reasons=[('시장 약세 인버스 확대' if regime.regime == 'bearish' else '중립 인버스 소액 유지')] + regime.trigger_reasons)
+                    hedge_plan.quantity = cash_limited_qty
+                    execution = execute_trade_plan(hedge_plan, broker=broker)
+                    state.mark_hedge_open(inverse_symbol, {'market_regime': regime.to_dict(), 'target_inverse_value': target_inverse_value, 'target_inverse_qty': inverse_target_qty, 'available_cash': available_cash, 'available_cash_source': available_cash_source, 'execution': execution.to_dict()})
+                    reports.append({'symbol': inverse_symbol, 'name': '인버스 헤지', 'price': inverse_snapshot.price, 'triggered': 'inverse_buy', 'market_regime': regime.to_dict(), 'available_cash': available_cash, 'available_cash_source': available_cash_source, 'execution': execution.to_dict()})
+                else:
+                    reports.append({'symbol': inverse_symbol, 'name': '인버스 헤지', 'price': inverse_snapshot.price, 'triggered': 'cash_blocked', 'market_regime': regime.to_dict(), 'available_cash': available_cash, 'available_cash_source': available_cash_source, 'target_inverse_value': target_inverse_value, 'target_inverse_qty': inverse_target_qty, 'current_inverse_qty': inverse_current_qty})
             elif inverse_target_qty < inverse_current_qty:
                 sell_qty = inverse_current_qty - inverse_target_qty
                 close_plan = TradePlan(symbol=inverse_symbol, signal='sell', quantity=sell_qty, entry_price=inverse_snapshot.price, stop_loss=None, take_profit=None, confidence=0.99, rationale=['인버스 비중 축소'])
                 execution = execute_trade_plan(close_plan, broker=broker)
-                reports.append({'symbol': inverse_symbol, 'name': '인버스 헤지', 'price': inverse_snapshot.price, 'triggered': 'inverse_trim', 'market_regime': regime.to_dict(), 'execution': execution.to_dict()})
+                reports.append({'symbol': inverse_symbol, 'name': '인버스 헤지', 'price': inverse_snapshot.price, 'triggered': 'inverse_trim', 'market_regime': regime.to_dict(), 'available_cash': available_cash, 'available_cash_source': available_cash_source, 'execution': execution.to_dict()})
             else:
-                reports.append({'symbol': inverse_symbol, 'name': '인버스 헤지', 'price': inverse_snapshot.price, 'triggered': None, 'market_regime': regime.to_dict(), 'target_inverse_value': target_inverse_value, 'target_inverse_qty': inverse_target_qty, 'current_inverse_qty': inverse_current_qty})
+                reports.append({'symbol': inverse_symbol, 'name': '인버스 헤지', 'price': inverse_snapshot.price, 'triggered': None, 'market_regime': regime.to_dict(), 'available_cash': available_cash, 'available_cash_source': available_cash_source, 'target_inverse_value': target_inverse_value, 'target_inverse_qty': inverse_target_qty, 'current_inverse_qty': inverse_current_qty})
 
     if os.getenv('AI_TRADING_ENABLE_NAME_HEDGE_MAP', '0') == '1':
         from app.hedge import load_hedge_map, resolve_hedge_symbol
