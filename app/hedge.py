@@ -73,8 +73,8 @@ def load_hedge_map() -> dict[str, str]:
     return out
 
 
-def resolve_hedge_symbol(primary_symbol: str, hedge_map: dict[str, str]) -> str | None:
-    return hedge_map.get(primary_symbol) or hedge_map.get('*')
+def resolve_hedge_symbol(primary_symbol: str, hedge_map: dict[str, str], primary_name: str | None = None) -> str | None:
+    return hedge_map.get(primary_symbol) or (primary_name and hedge_map.get(primary_name)) or hedge_map.get('*')
 
 
 def should_open_hedge(snapshot: MarketSnapshot, avg_price: float, state: StrategyState) -> tuple[bool, list[str]]:

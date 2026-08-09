@@ -180,7 +180,7 @@ def _scan_once(collector: KISLiveCollector, broker: KISBroker, account_no: str, 
                 'take_profit': rule.take_profit,
             })
 
-        hedge_symbol = resolve_hedge_symbol(rule.symbol, hedge_map)
+        hedge_symbol = resolve_hedge_symbol(rule.symbol, hedge_map, rule.name)
         if hedge_symbol and hedge_symbol != rule.symbol:
             hedge_snapshot = collector.fetch_snapshot(hedge_symbol)
             target_value, reasons = desired_hedge_value(snapshot, rule.avg_price, rule.quantity, strategy)
