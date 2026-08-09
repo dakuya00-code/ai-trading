@@ -116,6 +116,12 @@ class ApiTests(unittest.TestCase):
             app_main.KIS_ACCOUNT_NO = original_account
             app.state.live_portfolio_cache = original_cache
 
+
+    def test_strategy_state_endpoint_exists(self):
+        from app.main import strategy_state
+        body = strategy_state()
+        self.assertIn('buy_threshold', body)
+        self.assertIn('notebook_sources', body)
     def test_plan_and_backtest_endpoints(self):
         payload = MarketSnapshot(
             symbol='005930.KS',

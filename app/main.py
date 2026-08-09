@@ -14,6 +14,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse
 
 from app.dashboard import dashboard_html
 from app.engine import analyze_snapshot, plan_trade, run_backtest
+from app.strategy_state import StrategyState, StrategyStateStore, get_strategy_store, load_strategy_state, save_strategy_state
 from app.events import RealtimeHub, SQLiteEventStore, TradingEventService
 from app.models import (
     BacktestRequest,
@@ -50,6 +51,8 @@ app.state.hub = RealtimeHub()
 app.state.events = TradingEventService(app.state.store, app.state.hub)
 app.state.collector = build_collector_from_env()
 app.state.portfolio = PortfolioStore(PORTFOLIO_PATH)
+app.state.strategy_store = StrategyStateStore(os.getenv('AI_TRADING_STRATEGY_PATH', 'data/strategy_state.json'))
+app.state.strategy_state = app.state.strategy_store.load()
 app.state.live_portfolio_cache = {'summary': None, 'fetched_at': 0.0}
 app.state.events.record(kind='system', level='info', message='서비스 시작', source='boot')
 
@@ -345,6 +348,7 @@ def plan(snapshot: MarketSnapshot) -> TradePlan:
 @app.post('/backtest', response_model=BacktestResult)
 def backtest(request: BacktestRequest) -> BacktestResult:
     result = run_backtest(request)
+    app.state.strategy_state = app.state.strategy_store.load()
     app.state.last_backtest_return = f'{result.return_pct}%'
     _record_event(
         kind='fill',
@@ -355,3 +359,15 @@ def backtest(request: BacktestRequest) -> BacktestResult:
         meta={'wins': result.wins, 'losses': result.losses},
     )
     return result
+
+
+@app.get('/strategy/state')
+def strategy_state() -> dict[str, Any]:
+    app.state.strategy_state = app.state.strategy_store.load()
+    return app.state.strategy_state.to_dict()
+
+
+@app.post('/strategy/reset')
+def reset_strategy_state() -> dict[str, Any]:
+    app.state.strategy_state = app.state.strategy_store.save(StrategyState())
+    return app.state.strategy_state.to_dict()

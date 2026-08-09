@@ -3,18 +3,18 @@ from __future__ import annotations
 from app.models import BacktestRequest, BacktestResult, MarketSnapshot, PredictionResponse, TradePlan
 from app.risk import RiskPolicy
 from app.strategy import predict_signal
-
-
-RISK_POLICY = RiskPolicy()
+from app.strategy_state import learn_from_backtest, load_strategy_state
 
 
 def analyze_snapshot(snapshot: MarketSnapshot) -> PredictionResponse:
-    return predict_signal(snapshot)
+    state = load_strategy_state()
+    return predict_signal(snapshot, state=state)
 
 
 def plan_trade(snapshot: MarketSnapshot) -> TradePlan:
-    prediction = analyze_snapshot(snapshot)
-    return RISK_POLICY.build_trade_plan(snapshot, prediction)
+    state = load_strategy_state()
+    prediction = predict_signal(snapshot, state=state)
+    return RiskPolicy.from_state(state).build_trade_plan(snapshot, prediction)
 
 
 def run_backtest(request: BacktestRequest) -> BacktestResult:
@@ -59,7 +59,7 @@ def run_backtest(request: BacktestRequest) -> BacktestResult:
     return_pct = round(((final_cash - request.initial_cash) / request.initial_cash) * 100, 3)
     max_drawdown_pct = round(max(0.0, ((peak - equity) / peak) * 100), 3) if peak else 0.0
 
-    return BacktestResult(
+    result = BacktestResult(
         initial_cash=request.initial_cash,
         final_cash=final_cash,
         trades=trades,
@@ -69,3 +69,8 @@ def run_backtest(request: BacktestRequest) -> BacktestResult:
         max_drawdown_pct=max_drawdown_pct,
         notes=notes,
     )
+    learned = learn_from_backtest(result)
+    result.notes.append(
+        f"학습 반영: buy_threshold={learned.buy_threshold:.2f}, min_confidence={learned.min_confidence:.2f}, stop_loss={learned.stop_loss_pct:.3f}, take_profit={learned.take_profit_pct:.3f}, max_position_value={learned.max_position_value:.0f}"
+    )
+    return result

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from math import floor
 
 from app.models import MarketSnapshot, PredictionResponse, TradePlan
+from app.strategy_state import StrategyState, load_strategy_state
 
 
 @dataclass(slots=True)
@@ -12,6 +13,16 @@ class RiskPolicy:
     min_confidence: float = 0.35
     stop_loss_pct: float = 0.03
     take_profit_pct: float = 0.06
+
+    @classmethod
+    def from_state(cls, state: StrategyState | None = None) -> 'RiskPolicy':
+        state = state or load_strategy_state()
+        return cls(
+            max_position_value=state.max_position_value,
+            min_confidence=state.min_confidence,
+            stop_loss_pct=state.stop_loss_pct,
+            take_profit_pct=state.take_profit_pct,
+        )
 
     def quantity_for(self, snapshot: MarketSnapshot, confidence: float) -> int:
         if confidence < self.min_confidence:
