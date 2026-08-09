@@ -88,3 +88,22 @@ class PortfolioSummaryResponse(BaseModel):
 class PortfolioUpsertResponse(BaseModel):
     ok: bool
     position: PortfolioPositionResponse
+
+
+class HistoricalBacktestRequest(BaseModel):
+    symbol: str = Field(..., examples=["005930.KS"])
+    period: str = Field(default="1y", pattern="^(1mo|3mo|6mo|1y|2y)$")
+    initial_cash: float = Field(default=10_000_000, gt=0)
+
+
+class ExecutionResponse(BaseModel):
+    symbol: str
+    side: str
+    quantity: int
+    limit_price: float | None = None
+    dry_run: bool
+    submitted: bool
+    status: str
+    order_id: str | None = None
+    message: str = ''
+    raw: dict[str, object] = Field(default_factory=dict)

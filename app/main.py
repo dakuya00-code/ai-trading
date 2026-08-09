@@ -19,6 +19,8 @@ from app.events import RealtimeHub, SQLiteEventStore, TradingEventService
 from app.models import (
     BacktestRequest,
     BacktestResult,
+    ExecutionResponse,
+    HistoricalBacktestRequest,
     MarketSnapshot,
     PortfolioPositionRequest,
     PortfolioPositionResponse,
@@ -28,6 +30,8 @@ from app.models import (
     TradePlan,
 )
 from app.portfolio import PortfolioPosition, PortfolioStore, summary_from_live_holdings
+from backtest.historical import historical_snapshots
+from executor.broker import KISBroker, execute_trade_plan
 from collector.kis import KISLiveCollector, build_collector_from_env
 
 DB_PATH = os.getenv('AI_TRADING_DB_PATH', 'data/ai-trading.db')
@@ -53,6 +57,7 @@ app.state.collector = build_collector_from_env()
 app.state.portfolio = PortfolioStore(PORTFOLIO_PATH)
 app.state.strategy_store = StrategyStateStore(os.getenv('AI_TRADING_STRATEGY_PATH', 'data/strategy_state.json'))
 app.state.strategy_state = app.state.strategy_store.load()
+app.state.broker = KISBroker(account_no=KIS_ACCOUNT_NO)
 app.state.live_portfolio_cache = {'summary': None, 'fetched_at': 0.0}
 app.state.events.record(kind='system', level='info', message='서비스 시작', source='boot')
 
@@ -359,6 +364,40 @@ def backtest(request: BacktestRequest) -> BacktestResult:
         meta={'wins': result.wins, 'losses': result.losses},
     )
     return result
+
+
+@app.post('/backtest/historical', response_model=BacktestResult)
+def backtest_historical(request: HistoricalBacktestRequest) -> BacktestResult:
+    snapshots = historical_snapshots(request.symbol, period=request.period)
+    result = run_backtest(BacktestRequest(initial_cash=request.initial_cash, snapshots=snapshots))
+    app.state.last_backtest_return = f'{result.return_pct}%'
+    _record_event(
+        kind='fill',
+        level='info',
+        message=f'실과거 백테스트 {request.symbol}',
+        symbol=request.symbol,
+        return_pct=result.return_pct,
+        source='historical-backtest',
+        meta={'bars': len(snapshots), 'period': request.period},
+    )
+    return result
+
+
+@app.post('/execute', response_model=ExecutionResponse)
+def execute_trade(plan: TradePlan) -> ExecutionResponse:
+    result = execute_trade_plan(plan, broker=app.state.broker)
+    _record_event(
+        kind='order',
+        level='info',
+        message=f'{plan.symbol} 실행 {result.status}',
+        symbol=plan.symbol,
+        quantity=plan.quantity,
+        price=plan.entry_price,
+        signal=plan.signal,
+        source='broker',
+        meta=result.to_dict(),
+    )
+    return ExecutionResponse.model_validate(result.to_dict())
 
 
 @app.get('/strategy/state')

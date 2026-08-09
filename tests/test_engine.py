@@ -2,6 +2,7 @@ import unittest
 from unittest import TestCase
 
 from app.engine import analyze_snapshot, plan_trade, run_backtest
+from backtest.historical import historical_snapshots
 from app.models import BacktestRequest, MarketSnapshot
 
 
@@ -62,3 +63,10 @@ class StrategyLearningTests(TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HistoricalDataTests(unittest.TestCase):
+    def test_yahoo_one_year_bars_available(self):
+        snapshots = historical_snapshots('005930.KS', period='1y')
+        self.assertGreaterEqual(len(snapshots), 200)
+        self.assertGreater(snapshots[-1].price, 0)

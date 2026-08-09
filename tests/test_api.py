@@ -4,7 +4,7 @@ from base64 import b64encode
 from starlette.testclient import TestClient
 
 from app import main as app_main
-from app.main import app, backtest, collector_status, health, live_portfolio, market_snapshot, plan, portfolio, predict, status
+from app.main import app, backtest, backtest_historical, collector_status, execute_trade, health, live_portfolio, market_snapshot, plan, portfolio, predict, status
 from app.models import BacktestRequest, MarketSnapshot
 from collector.kis import MockKISCollector
 
@@ -122,6 +122,16 @@ class ApiTests(unittest.TestCase):
         body = strategy_state()
         self.assertIn('buy_threshold', body)
         self.assertIn('notebook_sources', body)
+
+    def test_execute_endpoint_dry_run(self):
+        from app.models import TradePlan
+        payload = TradePlan(symbol='005930.KS', signal='buy', quantity=1, entry_price=72000, stop_loss=69900, take_profit=76300, confidence=0.9, rationale=['test'])
+        result = execute_trade(payload)
+        self.assertEqual(result.symbol, '005930.KS')
+        self.assertIn(result.status, ('dry-run', 'submitted'))
+
+    def test_historical_backtest_endpoint_exists(self):
+        self.assertTrue(callable(backtest_historical))
     def test_plan_and_backtest_endpoints(self):
         payload = MarketSnapshot(
             symbol='005930.KS',
