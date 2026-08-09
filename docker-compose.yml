@@ -21,3 +21,26 @@ services:
     volumes:
       - ./data:/app/data
     restart: unless-stopped
+
+  watchdog:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-trading-watchdog
+    command: ["python", "-m", "agent.watchdog"]
+    environment:
+      AI_TRADING_DB_PATH: ${AI_TRADING_DB_PATH:-/app/data/ai-trading.db}
+      AI_TRADING_PORTFOLIO_PATH: ${AI_TRADING_PORTFOLIO_PATH:-/app/data/portfolio.json}
+      AI_TRADING_WATCHDOG_STATE: ${AI_TRADING_WATCHDOG_STATE:-/app/data/watchdog_state.json}
+      AI_TRADING_WATCH_INTERVAL_SECONDS: ${AI_TRADING_WATCH_INTERVAL_SECONDS:-300}
+      AI_TRADING_WATCH_SYMBOLS: ${AI_TRADING_WATCH_SYMBOLS:-}
+      AI_TRADING_ENABLE_LIVE_ORDERS: ${AI_TRADING_ENABLE_LIVE_ORDERS:-0}
+      KIS_ENABLE_LIVE: ${KIS_ENABLE_LIVE:-0}
+      KIS_BASE_URL: ${KIS_BASE_URL:-https://openapivts.koreainvestment.com:29443}
+      KIS_APP_KEY: ${KIS_APP_KEY:-}
+      KIS_APP_SECRET: ${KIS_APP_SECRET:-}
+      KIS_ACCESS_TOKEN: ${KIS_ACCESS_TOKEN:-}
+      KIS_ACCOUNT_NO: ${KIS_ACCOUNT_NO:-}
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
