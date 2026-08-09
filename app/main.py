@@ -175,6 +175,8 @@ def status() -> dict[str, Any]:
         'portfolio_pnl': portfolio.unrealized_pnl,
         'portfolio_source': portfolio.source,
         'portfolio_live_enabled': _live_portfolio_available(),
+        'strategy_profile': app.state.strategy_state.strategy_profile,
+        'position_multiplier': app.state.strategy_state.position_multiplier,
         'db_path': str(app.state.store.path),
         'portfolio_path': str(app.state.portfolio.path),
         'account_no_configured': bool(KIS_ACCOUNT_NO),

@@ -13,6 +13,25 @@ def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
+def _apply_runtime_profile(state: 'StrategyState') -> 'StrategyState':
+    profile = os.getenv('AI_TRADING_STRATEGY_PROFILE', 'balanced').strip().lower()
+    if profile not in {'balanced', 'aggressive'}:
+        profile = 'balanced'
+    state.strategy_profile = profile
+
+    if profile == 'aggressive':
+        state.buy_threshold = min(state.buy_threshold, float(os.getenv('AI_TRADING_AGGRESSIVE_BUY_THRESHOLD', '0.20')))
+        state.sell_threshold = max(state.sell_threshold, float(os.getenv('AI_TRADING_AGGRESSIVE_SELL_THRESHOLD', '-0.20')))
+        state.min_confidence = min(state.min_confidence, float(os.getenv('AI_TRADING_AGGRESSIVE_MIN_CONFIDENCE', '0.20')))
+        state.stop_loss_pct = max(state.stop_loss_pct, float(os.getenv('AI_TRADING_AGGRESSIVE_STOP_LOSS_PCT', '0.035')))
+        state.take_profit_pct = max(state.take_profit_pct, float(os.getenv('AI_TRADING_AGGRESSIVE_TAKE_PROFIT_PCT', '0.09')))
+        state.max_position_value = max(state.max_position_value, float(os.getenv('AI_TRADING_AGGRESSIVE_MAX_POSITION_VALUE', '2000000')))
+        state.position_multiplier = max(state.position_multiplier, float(os.getenv('AI_TRADING_AGGRESSIVE_POSITION_MULTIPLIER', '2.0')))
+    else:
+        state.position_multiplier = max(1.0, state.position_multiplier)
+    return state
+
+
 @dataclass(slots=True)
 class StrategyState:
     buy_threshold: float = 0.35
@@ -21,6 +40,8 @@ class StrategyState:
     stop_loss_pct: float = 0.03
     take_profit_pct: float = 0.06
     max_position_value: float = 1_000_000.0
+    position_multiplier: float = 1.0
+    strategy_profile: str = 'balanced'
     trend_weight: float = 0.5
     price_weight: float = 0.25
     rsi_weight: float = 0.2
@@ -69,6 +90,7 @@ class StrategyState:
             self.take_profit_pct = _clamp(self.take_profit_pct + 0.005, 0.03, 0.15)
             self.stop_loss_pct = _clamp(self.stop_loss_pct + 0.002, 0.02, 0.08)
             self.max_position_value = _clamp(self.max_position_value * 1.05, 100_000, 5_000_000)
+            self.position_multiplier = _clamp(self.position_multiplier * 1.05, 1.0, 6.0)
             self.last_update_reason = 'expanded-after-positive-backtest'
         elif result.return_pct < 0 or win_rate < 0.45 or result.max_drawdown_pct > 8:
             self.buy_threshold = _clamp(self.buy_threshold + 0.02, 0.20, 0.80)
@@ -77,6 +99,7 @@ class StrategyState:
             self.take_profit_pct = _clamp(self.take_profit_pct - 0.005, 0.03, 0.12)
             self.stop_loss_pct = _clamp(self.stop_loss_pct - 0.003, 0.015, 0.06)
             self.max_position_value = _clamp(self.max_position_value * 0.90, 50_000, 3_000_000)
+            self.position_multiplier = _clamp(self.position_multiplier * 0.90, 0.5, 4.0)
             self.last_update_reason = 'tightened-after-negative-backtest'
         else:
             self.last_update_reason = 'stable-no-change'
@@ -88,7 +111,7 @@ class StrategyStateStore:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
-    def load(self) -> StrategyState:
+    def _load_raw(self) -> StrategyState:
         if not self.path.exists():
             return StrategyState()
         try:
@@ -99,12 +122,15 @@ class StrategyStateStore:
             return StrategyState()
         return StrategyState.from_dict(raw)
 
+    def load(self) -> StrategyState:
+        return _apply_runtime_profile(self._load_raw())
+
     def save(self, state: StrategyState) -> StrategyState:
         self.path.write_text(json.dumps(state.to_dict(), ensure_ascii=False, indent=2), encoding='utf-8')
         return state
 
     def update_from_backtest(self, result: BacktestResult) -> StrategyState:
-        state = self.load()
+        state = self._load_raw()
         state.adapt_from_backtest(result)
         return self.save(state)
 

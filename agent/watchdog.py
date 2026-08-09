@@ -3,18 +3,19 @@ from __future__ import annotations
 import json
 import os
 import time
-from datetime import date
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, time as dtime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from app.hedge import build_hedge_plan, desired_hedge_value, load_hedge_map, resolve_hedge_symbol
 from app.strategy_state import load_strategy_state
 from collector.kis import KISLiveCollector, build_collector_from_env
 from executor.broker import KISBroker, execute_trade_plan
 from app.models import TradePlan
 
 
+KST = timezone(timedelta(hours=9))
 STATE_PATH = Path(os.getenv('AI_TRADING_WATCHDOG_STATE', 'data/watchdog_state.json'))
 STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
@@ -33,14 +34,6 @@ class WatchRule:
         return asdict(self)
 
 
-
-
-def _market_is_open(now: datetime | None = None) -> bool:
-    now = now or datetime.now(timezone.utc)
-    kst = now.astimezone().astimezone() if False else None
-    # Use local UTC weekday as a conservative weekend gate; on this host the goal is to suppress Sunday triggers.
-    return now.weekday() < 5
-
 class WatchdogState:
     def __init__(self, path: Path = STATE_PATH) -> None:
         self.path = path
@@ -48,11 +41,14 @@ class WatchdogState:
 
     def _load(self) -> dict[str, Any]:
         if not self.path.exists():
-            return {'rules': [], 'last_run_at': None}
+            return {'rules': [], 'hedges': {}, 'last_run_at': None}
         try:
-            return json.loads(self.path.read_text(encoding='utf-8'))
+            payload = json.loads(self.path.read_text(encoding='utf-8'))
+            if 'hedges' not in payload:
+                payload['hedges'] = {}
+            return payload
         except Exception:
-            return {'rules': [], 'last_run_at': None}
+            return {'rules': [], 'hedges': {}, 'last_run_at': None}
 
     def save(self) -> None:
         self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -69,6 +65,29 @@ class WatchdogState:
                 rule['triggered_at'] = datetime.now(timezone.utc).isoformat()
         self.data['last_run_at'] = datetime.now(timezone.utc).isoformat()
         self.save()
+
+    def hedge_active(self, hedge_symbol: str) -> bool:
+        return bool((self.data.get('hedges') or {}).get(hedge_symbol, {}).get('status') == 'open')
+
+    def mark_hedge_open(self, hedge_symbol: str, payload: dict[str, Any]) -> None:
+        hedges = self.data.setdefault('hedges', {})
+        hedges[hedge_symbol] = {'status': 'open', 'opened_at': datetime.now(timezone.utc).isoformat(), **payload}
+        self.save()
+
+    def mark_hedge_closed(self, hedge_symbol: str) -> None:
+        hedges = self.data.setdefault('hedges', {})
+        current = hedges.get(hedge_symbol) or {}
+        hedges[hedge_symbol] = {**current, 'status': 'closed', 'closed_at': datetime.now(timezone.utc).isoformat()}
+        self.save()
+
+
+def _market_is_open(now: datetime | None = None) -> bool:
+    now = now or datetime.now(KST)
+    if now.weekday() >= 5:
+        return False
+    market_open = dtime(9, 0)
+    market_close = dtime(15, 30)
+    return market_open <= now.time() <= market_close
 
 
 def _build_rules(collector: KISLiveCollector, account_no: str, *, override_symbols: list[str] | None = None) -> list[WatchRule]:
@@ -102,7 +121,15 @@ def _build_rules(collector: KISLiveCollector, account_no: str, *, override_symbo
 
 def _scan_once(collector: KISLiveCollector, broker: KISBroker, account_no: str, state: WatchdogState, *, override_symbols: list[str] | None = None) -> list[dict[str, Any]]:
     reports: list[dict[str, Any]] = []
+    holdings_payload = collector.fetch_holdings(account_no)
+    holdings = holdings_payload.get('holdings') or []
+    held_symbols = {str(item.get('pdno') or item.get('symbol') or '').strip() for item in holdings if str(item.get('pdno') or item.get('symbol') or '').strip()}
+    holdings_by_symbol = {str(item.get('pdno') or item.get('symbol') or '').strip(): item for item in holdings if str(item.get('pdno') or item.get('symbol') or '').strip()}
     rules = _build_rules(collector, account_no, override_symbols=override_symbols)
+    hedge_map = load_hedge_map()
+    strategy = load_strategy_state()
+    desired_hedges: dict[str, dict[str, Any]] = {}
+
     for rule in rules:
         state.mark_rule(rule)
         snapshot = collector.fetch_snapshot(rule.symbol)
@@ -152,6 +179,96 @@ def _scan_once(collector: KISLiveCollector, broker: KISBroker, account_no: str, 
                 'stop_loss': rule.stop_loss,
                 'take_profit': rule.take_profit,
             })
+
+        hedge_symbol = resolve_hedge_symbol(rule.symbol, hedge_map)
+        if hedge_symbol and hedge_symbol != rule.symbol:
+            hedge_snapshot = collector.fetch_snapshot(hedge_symbol)
+            target_value, reasons = desired_hedge_value(snapshot, rule.avg_price, rule.quantity, strategy)
+            if target_value > 0:
+                desired_hedges[hedge_symbol] = {
+                    'target_value': desired_hedges.get(hedge_symbol, {}).get('target_value', 0.0) + target_value,
+                    'primary_symbols': sorted(set(desired_hedges.get(hedge_symbol, {}).get('primary_symbols', []) + [rule.symbol])),
+                    'reasons': sorted(set(desired_hedges.get(hedge_symbol, {}).get('reasons', []) + reasons)),
+                    'hedge_snapshot': hedge_snapshot,
+                }
+            elif state.hedge_active(hedge_symbol) and hedge_symbol not in held_symbols:
+                state.mark_hedge_closed(hedge_symbol)
+
+    for hedge_symbol, payload in desired_hedges.items():
+        hedge_snapshot = payload['hedge_snapshot']
+        if hedge_symbol in held_symbols or state.hedge_active(hedge_symbol):
+            continue
+        if not _market_is_open():
+            reports.append({
+                'symbol': hedge_symbol,
+                'name': 'hedge',
+                'price': hedge_snapshot.price,
+                'triggered': 'market_closed',
+                'hedge_for': payload['primary_symbols'],
+            })
+            continue
+        hedge_plan = build_hedge_plan(
+            hedge_symbol=hedge_symbol,
+            target_value=payload['target_value'],
+            hedge_snapshot=hedge_snapshot,
+            reasons=payload['reasons'],
+        )
+        execution = execute_trade_plan(hedge_plan, broker=broker)
+        state.mark_hedge_open(hedge_symbol, {
+            'primary_symbols': payload['primary_symbols'],
+            'target_value': payload['target_value'],
+            'reasons': payload['reasons'],
+            'execution': execution.to_dict(),
+        })
+        reports.append({
+            'symbol': hedge_symbol,
+            'name': 'hedge',
+            'price': hedge_snapshot.price,
+            'triggered': 'hedge_open',
+            'hedge_for': payload['primary_symbols'],
+            'execution': execution.to_dict(),
+        })
+
+    active_hedges = dict(state.data.get('hedges') or {})
+    for hedge_symbol, hedge_state in active_hedges.items():
+        if hedge_symbol in desired_hedges:
+            continue
+        if hedge_symbol not in held_symbols:
+            state.mark_hedge_closed(hedge_symbol)
+            continue
+        if not _market_is_open():
+            continue
+        hedge_item = holdings_by_symbol.get(hedge_symbol) or {}
+        qty_raw = hedge_item.get('hldg_qty') or hedge_item.get('quantity') or hedge_item.get('qty') or 0
+        try:
+            qty = int(float(str(qty_raw).replace(',', '').strip()))
+        except Exception:
+            qty = 0
+        if qty <= 0:
+            state.mark_hedge_closed(hedge_symbol)
+            continue
+        close_snapshot = collector.fetch_snapshot(hedge_symbol)
+        close_plan = TradePlan(
+            symbol=hedge_symbol,
+            signal='sell',
+            quantity=qty,
+            entry_price=close_snapshot.price,
+            stop_loss=None,
+            take_profit=None,
+            confidence=0.99,
+            rationale=['hedge unwind'],
+        )
+        execution = execute_trade_plan(close_plan, broker=broker)
+        state.mark_hedge_closed(hedge_symbol)
+        reports.append({
+            'symbol': hedge_symbol,
+            'name': 'hedge',
+            'price': close_snapshot.price,
+            'triggered': 'hedge_close',
+            'execution': execution.to_dict(),
+            'hedge_state': hedge_state,
+        })
+
     state.data['last_run_at'] = datetime.now(timezone.utc).isoformat()
     state.save()
     return reports
@@ -169,7 +286,7 @@ def main() -> None:
     state = WatchdogState()
     override = [s.strip() for s in os.getenv('AI_TRADING_WATCH_SYMBOLS', '').split(',') if s.strip()]
     override_symbols = override or None
-    print(json.dumps({'status': 'started', 'interval': interval, 'live_orders': broker.enable_live_orders, 'account': account_no}, ensure_ascii=False), flush=True)
+    print(json.dumps({'status': 'started', 'interval': interval, 'live_orders': broker.enable_live_orders, 'account': account_no, 'profile': load_strategy_state().strategy_profile}, ensure_ascii=False), flush=True)
     while True:
         try:
             reports = _scan_once(collector, broker, account_no, state, override_symbols=override_symbols)
