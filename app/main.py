@@ -50,6 +50,7 @@ app.state.hub = RealtimeHub()
 app.state.events = TradingEventService(app.state.store, app.state.hub)
 app.state.collector = build_collector_from_env()
 app.state.portfolio = PortfolioStore(PORTFOLIO_PATH)
+app.state.live_portfolio_cache = {'summary': None, 'fetched_at': 0.0}
 app.state.events.record(kind='system', level='info', message='서비스 시작', source='boot')
 
 
@@ -107,18 +108,32 @@ def _live_portfolio_available() -> bool:
     return bool(KIS_ACCOUNT_NO and isinstance(app.state.collector, KISLiveCollector) and app.state.collector.status.configured)
 
 
-def _portfolio_view(source: str = 'auto') -> PortfolioSummaryResponse:
+def _live_portfolio_view(force_refresh: bool = False, ttl_seconds: float = 10.0) -> PortfolioSummaryResponse:
+    cache = getattr(app.state, 'live_portfolio_cache', {'summary': None, 'fetched_at': 0.0})
+    now = monotonic()
+    cached = cache.get('summary')
+    if not force_refresh and cached is not None and (now - float(cache.get('fetched_at', 0.0))) < ttl_seconds:
+        return cached
+    try:
+        live = app.state.collector.fetch_holdings(KIS_ACCOUNT_NO)
+        summary = summary_from_live_holdings(live)
+        response = PortfolioSummaryResponse.model_validate(summary.to_dict())
+        app.state.live_portfolio_cache = {'summary': response, 'fetched_at': now}
+        return response
+    except Exception as exc:
+        app.state.collector.status.last_error = str(exc)
+        if cached is not None:
+            return cached
+        fallback = app.state.portfolio.snapshot_local()
+        fallback.source = 'local-fallback'
+        response = PortfolioSummaryResponse.model_validate(fallback.to_dict())
+        return response
+
+
+def _portfolio_view(source: str = 'auto', force_refresh: bool = False) -> PortfolioSummaryResponse:
     if source == 'live' or (source == 'auto' and _live_portfolio_available()):
-        try:
-            live = app.state.collector.fetch_holdings(KIS_ACCOUNT_NO)
-            summary = summary_from_live_holdings(live)
-            return PortfolioSummaryResponse.model_validate(summary.to_dict())
-        except Exception as exc:
-            app.state.collector.status.last_error = str(exc)
-            fallback = app.state.portfolio.snapshot(app.state.collector)
-            fallback.source = 'local-fallback'
-            return PortfolioSummaryResponse.model_validate(fallback.to_dict())
-    summary = app.state.portfolio.snapshot(app.state.collector)
+        return _live_portfolio_view(force_refresh=force_refresh)
+    summary = app.state.portfolio.snapshot_local()
     return PortfolioSummaryResponse.model_validate(summary.to_dict())
 
 
@@ -279,7 +294,7 @@ def delete_portfolio_position(symbol: str) -> dict[str, Any]:
 
 @app.post('/portfolio/refresh', response_model=PortfolioSummaryResponse)
 def refresh_portfolio() -> PortfolioSummaryResponse:
-    summary = _portfolio_view()
+    summary = _portfolio_view(force_refresh=True)
     _record_event(
         kind='portfolio',
         level='info',

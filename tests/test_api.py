@@ -64,6 +64,58 @@ class ApiTests(unittest.TestCase):
         except Exception:
             pass
 
+    def test_live_portfolio_cache_avoids_repeat_fetches(self):
+        original_collector = app.state.collector
+        original_account = app_main.KIS_ACCOUNT_NO
+        original_cache = getattr(app.state, 'live_portfolio_cache', None)
+
+        class FakeStatus:
+            configured = True
+            mode = 'kis-live'
+            last_error = None
+
+            def to_dict(self):
+                return {'mode': self.mode, 'configured': self.configured, 'last_error': self.last_error}
+
+        class FakeCollector:
+            def __init__(self):
+                self.status = FakeStatus()
+                self.calls = 0
+
+            def fetch_holdings(self, account_no):
+                self.calls += 1
+                return {
+                    'holdings': [
+                        {
+                            'pdno': '005930',
+                            'prdt_name': '삼성전자',
+                            'hldg_qty': '10',
+                            'pchs_avg_pric': '70000',
+                            'prpr': '72000',
+                            'evlu_amt': '720000',
+                            'pchs_amt': '700000',
+                            'evlu_pfls_amt': '20000',
+                            'evlu_pfls_rt': '2.86',
+                        }
+                    ]
+                }
+
+        fake = FakeCollector()
+        try:
+            app.state.collector = fake
+            app_main.KIS_ACCOUNT_NO = '12345678-01'
+            app.state.live_portfolio_cache = {'summary': None, 'fetched_at': 0.0}
+            first = app_main._portfolio_view(source='live')
+            second = app_main._portfolio_view(source='live')
+            self.assertEqual(fake.calls, 1)
+            self.assertEqual(first.positions_count, 1)
+            self.assertEqual(second.positions_count, 1)
+            self.assertEqual(first.source, 'kis-live')
+        finally:
+            app.state.collector = original_collector
+            app_main.KIS_ACCOUNT_NO = original_account
+            app.state.live_portfolio_cache = original_cache
+
     def test_plan_and_backtest_endpoints(self):
         payload = MarketSnapshot(
             symbol='005930.KS',
