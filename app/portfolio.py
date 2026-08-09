@@ -252,6 +252,41 @@ class PortfolioStore:
             source='local',
         )
 
+    def snapshot_local(self) -> PortfolioSummary:
+        rows: list[PortfolioRow] = []
+        total_market_value = 0.0
+        total_cost_basis = 0.0
+        for position in self._positions:
+            cost_basis = round(position.quantity * position.avg_price, 2)
+            row = PortfolioRow(
+                symbol=position.symbol,
+                name=position.name or position.symbol,
+                quantity=position.quantity,
+                avg_price=position.avg_price,
+                current_price=position.avg_price,
+                market_value=cost_basis,
+                cost_basis=cost_basis,
+                unrealized_pnl=0.0,
+                unrealized_pnl_pct=0.0,
+                sector=position.sector,
+                memo=position.memo,
+                updated_at=datetime.now(timezone.utc).isoformat(),
+            )
+            rows.append(row)
+            total_market_value += row.market_value
+            total_cost_basis += row.cost_basis
+        updated_at = datetime.now(timezone.utc).isoformat() if rows else self._last_updated_at
+        return PortfolioSummary(
+            positions=rows,
+            total_market_value=round(total_market_value, 2),
+            total_cost_basis=round(total_cost_basis, 2),
+            unrealized_pnl=0.0,
+            unrealized_pnl_pct=0.0,
+            positions_count=len(rows),
+            updated_at=updated_at,
+            source='local',
+        )
+
 
 def summary_from_live_holdings(holdings_payload: dict[str, Any]) -> PortfolioSummary:
     rows: list[PortfolioRow] = []

@@ -30,6 +30,9 @@ def dashboard_html() -> str:
     .status-row{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
     .pill{display:inline-flex;gap:7px;align-items:center;padding:9px 12px;border-radius:999px;background:rgba(30,41,59,.9);border:1px solid var(--line);font-size:13px}
     .dot{width:9px;height:9px;border-radius:50%;background:var(--muted)} .dot.ok{background:var(--good)} .dot.bad{background:var(--bad)}
+    .spinner{width:14px;height:14px;border-radius:50%;border:2px solid rgba(125,211,252,.25);border-top-color:#7dd3fc;display:inline-block;animation:spin .8s linear infinite;vertical-align:middle}
+    .spinner.hidden{display:none}
+    @keyframes spin{to{transform:rotate(360deg)}}
     .tabs{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
     .tab-btn{padding:10px 14px;border:1px solid var(--line);background:rgba(15,23,42,.8);color:var(--text);border-radius:999px;cursor:pointer}
     .tab-btn.active{background:linear-gradient(135deg,#2563eb,#0ea5e9);border-color:transparent}
@@ -138,7 +141,7 @@ def dashboard_html() -> str:
               </div>
               <div>
                 <div class='row'><span>수집기</span><span class='tag' id='tagCollector'>-</span></div>
-                <div class='row'><span>포트폴리오</span><span class='tag' id='tagPortfolio'>-</span></div>
+                <div class='row'><span>포트폴리오</span><span style='display:flex;align-items:center;gap:8px;'><span id='portfolioSpinner' class='spinner hidden' aria-label='조회 중'></span><span class='tag' id='tagPortfolio'>-</span></span></div>
                 <div class='row'><span>자동 새로고침</span><span class='tag good' id='tagAuto'>ON</span></div>
                 <div class='row'><span>알림</span><span class='tag' id='tagNotify'>OFF</span></div>
                 <div class='row'><span>이벤트</span><span class='tag' id='tagEvents'>0</span></div>
@@ -188,7 +191,8 @@ def dashboard_html() -> str:
               <div class='field' style='min-width:220px'><label>보유종목 선택</label><select id='portfolioPick'></select></div>
               <div class='toolbar'>
                 <button class='btn ghost' type='button' onclick='syncSelectedPortfolio()'>입력패널로 복사</button>
-                <button class='btn ghost' type='button' onclick='refreshPortfolio()'>포트폴리오 새로고침</button>
+                <button class='btn ghost' type='button' onclick='refreshPortfolio()'>로컬 새로고침</button>
+                <button class='btn ghost' type='button' onclick='loadLivePortfolio(true)'>실계좌 새로고침</button>
               </div>
             </div>
             <details style='margin-top:12px;'>
@@ -432,6 +436,12 @@ KIS_ACCESS_TOKEN=...
       marketValue.textContent = money(row.market_value);
       marketValue.className = 'metric';
     }
+    function setPortfolioLoading(loading){
+      const spinner = document.getElementById('portfolioSpinner');
+      const tag = document.getElementById('tagPortfolio');
+      if (spinner) spinner.classList.toggle('hidden', !loading);
+      if (tag && loading) { tag.textContent = '조회중'; tag.className = 'tag warn'; }
+    }
     function renderPortfolio(summary){
       state.portfolio = summary;
       setMetric('portfolioCount', String(summary.positions_count ?? 0));
@@ -490,9 +500,29 @@ KIS_ACCESS_TOKEN=...
       await refreshPortfolio(true);
     }
     async function refreshPortfolio(manual=false){
-      const { body } = await fetchJson('/portfolio');
+      const { body } = await fetchJson('/portfolio/local');
       renderPortfolio(body);
-      if (manual) toast('포트폴리오', '보유현황을 갱신했습니다.', 'good');
+      if (manual) toast('포트폴리오', '로컬 보유현황을 갱신했습니다.', 'good');
+    }
+    async function loadLivePortfolio(manual=false){
+      setPortfolioLoading(true);
+      try {
+        const { body } = await fetchJson('/portfolio/live');
+        renderPortfolio(body);
+        if (manual) toast('실계좌 포트폴리오', '실계좌 보유현황을 갱신했습니다.', 'good');
+      } catch (liveErr) {
+        try {
+          const { body } = await fetchJson('/portfolio/local');
+          renderPortfolio(body);
+          setBadge('tagPortfolio', '로컬', '');
+          if (manual) toast('포트폴리오', '실계좌 조회 실패로 로컬 보유현황을 표시했습니다.', 'warn');
+        } catch (localErr) {
+          setBadge('tagPortfolio', '오류', 'bad');
+          toast('포트폴리오 오류', String(localErr), 'warn');
+        }
+      } finally {
+        setPortfolioLoading(false);
+      }
     }
     function renderOverview(status, collector){
       setMetric('cardHealth', status.health || '-');
@@ -572,14 +602,7 @@ KIS_ACCESS_TOKEN=...
           fetchJson('/collector/status'),
           fetchJson(`/events?limit=${document.getElementById('logLimit').value}`)
         ]);
-        let portfolioRes;
-        try {
-          portfolioRes = await fetchJson('/portfolio/live');
-        } catch (liveErr) {
-          portfolioRes = await fetchJson('/portfolio');
-        }
         renderOverview(statusRes.body, collectorRes.body);
-        renderPortfolio(portfolioRes.body);
         const newCount = eventsRes.body.filter(ev => upsertEvent(ev)).length;
         renderEvents();
         drawChart();
@@ -587,7 +610,8 @@ KIS_ACCESS_TOKEN=...
         document.getElementById('tagAuto').textContent = document.getElementById('autoRefresh').checked ? 'ON' : 'OFF';
         document.getElementById('tagNotify').textContent = document.getElementById('notifyToggle').checked ? 'ON' : 'OFF';
         refreshLabel(getRefreshIntervalMs());
-        if (manual) toast('새로고침', `상태, 포트폴리오, 이벤트를 갱신했습니다. (${newCount}개)`);
+        void loadLivePortfolio(manual);
+        if (manual) toast('새로고침', `상태, 이벤트를 갱신했습니다. 실계좌 포트폴리오는 별도 조회합니다. (${newCount}개)`, 'good');
       } catch (err) {
         document.getElementById('healthDot').className = 'dot bad';
         document.getElementById('healthText').textContent = '서버 오류';

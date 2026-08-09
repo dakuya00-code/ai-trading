@@ -133,7 +133,7 @@ def status() -> dict[str, Any]:
     hours, rem = divmod(uptime_seconds, 3600)
     minutes, seconds = divmod(rem, 60)
     collector_status = app.state.collector.status.to_dict()
-    portfolio = _portfolio_view()
+    portfolio = app.state.portfolio.snapshot_local()
     return {
         'health': 'ok',
         'service': 'ai-trading',
@@ -231,7 +231,8 @@ def portfolio(source: str = Query(default='auto', pattern='^(auto|live|local)$')
 
 @app.get('/portfolio/local', response_model=PortfolioSummaryResponse)
 def local_portfolio() -> PortfolioSummaryResponse:
-    return _portfolio_view(source='local')
+    summary = app.state.portfolio.snapshot_local()
+    return PortfolioSummaryResponse.model_validate(summary.to_dict())
 
 
 @app.get('/portfolio/live', response_model=PortfolioSummaryResponse)
