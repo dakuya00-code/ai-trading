@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from datetime import date
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,6 +32,14 @@ class WatchRule:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+
+
+
+def _market_is_open(now: datetime | None = None) -> bool:
+    now = now or datetime.now(timezone.utc)
+    kst = now.astimezone().astimezone() if False else None
+    # Use local UTC weekday as a conservative weekend gate; on this host the goal is to suppress Sunday triggers.
+    return now.weekday() < 5
 
 class WatchdogState:
     def __init__(self, path: Path = STATE_PATH) -> None:
@@ -102,6 +111,16 @@ def _scan_once(collector: KISLiveCollector, broker: KISBroker, account_no: str, 
             triggered = 'stop_loss'
         elif snapshot.price >= rule.take_profit:
             triggered = 'take_profit'
+        if not _market_is_open():
+            reports.append({
+                'symbol': rule.symbol,
+                'name': rule.name,
+                'price': snapshot.price,
+                'triggered': 'market_closed',
+                'stop_loss': rule.stop_loss,
+                'take_profit': rule.take_profit,
+            })
+            continue
         if triggered:
             plan = TradePlan(
                 symbol=rule.symbol,
