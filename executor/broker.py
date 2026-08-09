@@ -32,6 +32,17 @@ def _default_headers() -> dict[str, str]:
     }
 
 
+def _is_token_expired_body(body: str) -> bool:
+    return '기간이 만료된 token 입니다.' in body or 'EGW00123' in body
+
+
+def _safe_reset_token(obj: Any) -> None:
+    try:
+        obj.access_token = None
+    except Exception:
+        pass
+
+
 @dataclass(slots=True)
 class OrderExecutionResult:
     symbol: str
@@ -148,34 +159,53 @@ class KISBroker:
             'ORD_UNPR': str(int(round(instruction.limit_price or 0))),
         }
         tr_id = os.getenv('KIS_BUY_TR_ID', 'TTTC0802U') if instruction.side == 'buy' else os.getenv('KIS_SELL_TR_ID', 'TTTC0801U')
-        req = urllib.request.Request(
-            f'{self.base_url}/uapi/domestic-stock/v1/trading/order-cash',
-            data=json.dumps(payload).encode('utf-8'),
-            method='POST',
-            headers=_default_headers() | self._auth_headers(tr_id, payload),
-        )
-        with urllib.request.urlopen(req, timeout=30) as res:
-            text = res.read().decode('utf-8')
+        last_error: Exception | None = None
+        for attempt in range(3):
+            req = urllib.request.Request(
+                f'{self.base_url}/uapi/domestic-stock/v1/trading/order-cash',
+                data=json.dumps(payload).encode('utf-8'),
+                method='POST',
+                headers=_default_headers() | self._auth_headers(tr_id, payload),
+            )
             try:
-                data = json.loads(text)
-            except Exception:
-                data = {'raw_text': text}
-        output = data.get('output') if isinstance(data, dict) else {}
-        order_id = None
-        if isinstance(output, dict):
-            order_id = output.get('ODNO') or output.get('odno') or output.get('order_no')
-        return OrderExecutionResult(
-            symbol=instruction.symbol,
-            side=instruction.side,
-            quantity=instruction.quantity,
-            limit_price=instruction.limit_price,
-            dry_run=False,
-            submitted=True,
-            status='submitted',
-            order_id=str(order_id) if order_id is not None else None,
-            message='KIS 주문이 제출되었습니다.',
-            raw=data if isinstance(data, dict) else {'raw_text': text},
-        )
+                with urllib.request.urlopen(req, timeout=30) as res:
+                    text = res.read().decode('utf-8')
+                try:
+                    data = json.loads(text)
+                except Exception:
+                    data = {'raw_text': text}
+                output = data.get('output') if isinstance(data, dict) else {}
+                order_id = None
+                if isinstance(output, dict):
+                    order_id = output.get('ODNO') or output.get('odno') or output.get('order_no')
+                return OrderExecutionResult(
+                    symbol=instruction.symbol,
+                    side=instruction.side,
+                    quantity=instruction.quantity,
+                    limit_price=instruction.limit_price,
+                    dry_run=False,
+                    submitted=True,
+                    status='submitted',
+                    order_id=str(order_id) if order_id is not None else None,
+                    message='KIS 주문이 제출되었습니다.',
+                    raw=data if isinstance(data, dict) else {'raw_text': text},
+                )
+            except urllib.error.HTTPError as exc:
+                last_error = exc
+                body = exc.read().decode('utf-8', 'ignore')
+                if _is_token_expired_body(body):
+                    _safe_reset_token(self)
+                    if attempt < 2:
+                        continue
+                    raise RuntimeError(f'KIS token expired: {body[:500]}') from exc
+                if exc.code not in {403, 429, 500, 502, 503, 504}:
+                    raise
+                if attempt < 2:
+                    continue
+                raise RuntimeError(f'KIS HTTP {exc.code}: {body[:500]}') from exc
+        if last_error:
+            raise last_error
+        raise RuntimeError('KIS order request failed without response')
 
 
 def execute_trade_plan(plan: TradePlan, broker: KISBroker | None = None) -> OrderExecutionResult:

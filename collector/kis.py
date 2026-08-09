@@ -87,6 +87,17 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _is_token_expired_body(body: str) -> bool:
+    return '기간이 만료된 token 입니다.' in body or 'EGW00123' in body
+
+
+def _safe_reset_token(obj: Any) -> None:
+    try:
+        obj.access_token = None
+    except Exception:
+        pass
+
+
 def _extract_available_cash(summary: dict[str, Any]) -> tuple[float, str | None]:
     """Best-effort extraction of usable cash from KIS balance summary."""
     if not isinstance(summary, dict):
@@ -255,12 +266,18 @@ class KISLiveCollector:
                     return json.loads(res.read().decode('utf-8'))
             except urllib.error.HTTPError as exc:
                 last_error = exc
+                body = exc.read().decode('utf-8', 'ignore')
+                if _is_token_expired_body(body):
+                    _safe_reset_token(self)
+                    if attempt < 2:
+                        time.sleep(0.5)
+                        continue
+                    raise RuntimeError(f'KIS token expired: {body[:500]}') from exc
                 if exc.code not in {403, 429, 500, 502, 503, 504}:
                     raise
                 if attempt < 2:
                     time.sleep(1.5 * (attempt + 1))
                     continue
-                body = exc.read().decode('utf-8', 'ignore')
                 raise RuntimeError(f'KIS HTTP {exc.code}: {body[:500]}') from exc
         if last_error:
             raise last_error
