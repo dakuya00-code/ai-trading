@@ -8,7 +8,7 @@ from datetime import datetime, time as dtime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from app.hedge import build_hedge_plan, desired_hedge_value, load_hedge_map, resolve_hedge_symbol
+from app.hedge import build_hedge_plan, detect_market_regime, market_overlay_target
 from app.strategy_state import load_strategy_state
 from collector.kis import KISLiveCollector, build_collector_from_env
 from executor.broker import KISBroker, execute_trade_plan
@@ -41,14 +41,14 @@ class WatchdogState:
 
     def _load(self) -> dict[str, Any]:
         if not self.path.exists():
-            return {'rules': [], 'hedges': {}, 'last_run_at': None}
+            return {'rules': [], 'hedges': {}, 'last_run_at': None, 'market_regime': None}
         try:
             payload = json.loads(self.path.read_text(encoding='utf-8'))
-            if 'hedges' not in payload:
-                payload['hedges'] = {}
+            payload.setdefault('hedges', {})
+            payload.setdefault('market_regime', None)
             return payload
         except Exception:
-            return {'rules': [], 'hedges': {}, 'last_run_at': None}
+            return {'rules': [], 'hedges': {}, 'last_run_at': None, 'market_regime': None}
 
     def save(self) -> None:
         self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -123,12 +123,30 @@ def _scan_once(collector: KISLiveCollector, broker: KISBroker, account_no: str, 
     reports: list[dict[str, Any]] = []
     holdings_payload = collector.fetch_holdings(account_no)
     holdings = holdings_payload.get('holdings') or []
-    held_symbols = {str(item.get('pdno') or item.get('symbol') or '').strip() for item in holdings if str(item.get('pdno') or item.get('symbol') or '').strip()}
     holdings_by_symbol = {str(item.get('pdno') or item.get('symbol') or '').strip(): item for item in holdings if str(item.get('pdno') or item.get('symbol') or '').strip()}
     rules = _build_rules(collector, account_no, override_symbols=override_symbols)
-    hedge_map = load_hedge_map()
     strategy = load_strategy_state()
-    desired_hedges: dict[str, dict[str, Any]] = {}
+
+    benchmark_symbol = os.getenv('AI_TRADING_MARKET_BENCHMARK_SYMBOL', '069500.KS').strip()
+    inverse_symbol = os.getenv('AI_TRADING_INVERSE_SYMBOL', os.getenv('AI_TRADING_DEFAULT_HEDGE_SYMBOL', '114800.KS')).strip()
+    benchmark_snapshot = collector.fetch_snapshot(benchmark_symbol)
+    regime = detect_market_regime(benchmark_snapshot, strategy)
+    state.data['market_regime'] = regime.to_dict()
+    state.save()
+
+    portfolio_value = 0.0
+    for item in holdings:
+        qty_raw = item.get('hldg_qty') or item.get('quantity') or item.get('qty') or 0
+        current_raw = item.get('prpr') or item.get('stck_prpr') or item.get('evlu_pric') or item.get('current_price') or 0
+        try:
+            qty = int(float(str(qty_raw).replace(',', '').strip()))
+        except Exception:
+            qty = 0
+        try:
+            current_price = float(str(current_raw).replace(',', '').strip())
+        except Exception:
+            current_price = 0.0
+        portfolio_value += max(0.0, qty * current_price)
 
     for rule in rules:
         state.mark_rule(rule)
@@ -139,135 +157,57 @@ def _scan_once(collector: KISLiveCollector, broker: KISBroker, account_no: str, 
         elif snapshot.price >= rule.take_profit:
             triggered = 'take_profit'
         if not _market_is_open():
-            reports.append({
-                'symbol': rule.symbol,
-                'name': rule.name,
-                'price': snapshot.price,
-                'triggered': 'market_closed',
-                'stop_loss': rule.stop_loss,
-                'take_profit': rule.take_profit,
-            })
+            reports.append({'symbol': rule.symbol, 'name': rule.name, 'price': snapshot.price, 'triggered': 'market_closed', 'stop_loss': rule.stop_loss, 'take_profit': rule.take_profit})
             continue
         if triggered:
-            plan = TradePlan(
-                symbol=rule.symbol,
-                signal='sell',
-                quantity=rule.quantity,
-                entry_price=snapshot.price,
-                stop_loss=None,
-                take_profit=None,
-                confidence=1.0,
-                rationale=[f'watchdog {triggered}'],
-            )
+            plan = TradePlan(symbol=rule.symbol, signal='sell', quantity=rule.quantity, entry_price=snapshot.price, stop_loss=None, take_profit=None, confidence=1.0, rationale=[f'watchdog {triggered}'])
             execution = execute_trade_plan(plan, broker=broker)
             state.mark_triggered(rule.symbol)
-            reports.append({
-                'symbol': rule.symbol,
-                'name': rule.name,
-                'price': snapshot.price,
-                'triggered': triggered,
-                'stop_loss': rule.stop_loss,
-                'take_profit': rule.take_profit,
-                'execution': execution.to_dict(),
-            })
+            reports.append({'symbol': rule.symbol, 'name': rule.name, 'price': snapshot.price, 'triggered': triggered, 'stop_loss': rule.stop_loss, 'take_profit': rule.take_profit, 'execution': execution.to_dict()})
         else:
-            reports.append({
-                'symbol': rule.symbol,
-                'name': rule.name,
-                'price': snapshot.price,
-                'triggered': None,
-                'stop_loss': rule.stop_loss,
-                'take_profit': rule.take_profit,
-            })
+            reports.append({'symbol': rule.symbol, 'name': rule.name, 'price': snapshot.price, 'triggered': None, 'stop_loss': rule.stop_loss, 'take_profit': rule.take_profit})
 
-        hedge_symbol = resolve_hedge_symbol(rule.symbol, hedge_map, rule.name)
-        if hedge_symbol and hedge_symbol != rule.symbol:
-            hedge_snapshot = collector.fetch_snapshot(hedge_symbol)
-            target_value, reasons = desired_hedge_value(snapshot, rule.avg_price, rule.quantity, strategy)
-            if target_value > 0:
-                desired_hedges[hedge_symbol] = {
-                    'target_value': desired_hedges.get(hedge_symbol, {}).get('target_value', 0.0) + target_value,
-                    'primary_symbols': sorted(set(desired_hedges.get(hedge_symbol, {}).get('primary_symbols', []) + [rule.symbol])),
-                    'reasons': sorted(set(desired_hedges.get(hedge_symbol, {}).get('reasons', []) + reasons)),
-                    'hedge_snapshot': hedge_snapshot,
-                }
-            elif state.hedge_active(hedge_symbol) and hedge_symbol not in held_symbols:
-                state.mark_hedge_closed(hedge_symbol)
+    target_inverse_value = market_overlay_target(portfolio_value, regime)
+    inverse_snapshot = collector.fetch_snapshot(inverse_symbol)
+    inverse_item = holdings_by_symbol.get(inverse_symbol) or {}
+    inverse_qty_raw = inverse_item.get('hldg_qty') or inverse_item.get('quantity') or inverse_item.get('qty') or 0
+    try:
+        inverse_current_qty = int(float(str(inverse_qty_raw).replace(',', '').strip()))
+    except Exception:
+        inverse_current_qty = 0
+    inverse_target_qty = max(0, int(target_inverse_value // max(inverse_snapshot.price, 1e-9)))
 
-    for hedge_symbol, payload in desired_hedges.items():
-        hedge_snapshot = payload['hedge_snapshot']
-        if hedge_symbol in held_symbols or state.hedge_active(hedge_symbol):
-            continue
-        if not _market_is_open():
-            reports.append({
-                'symbol': hedge_symbol,
-                'name': 'hedge',
-                'price': hedge_snapshot.price,
-                'triggered': 'market_closed',
-                'hedge_for': payload['primary_symbols'],
-            })
-            continue
-        hedge_plan = build_hedge_plan(
-            hedge_symbol=hedge_symbol,
-            target_value=payload['target_value'],
-            hedge_snapshot=hedge_snapshot,
-            reasons=payload['reasons'],
-        )
-        execution = execute_trade_plan(hedge_plan, broker=broker)
-        state.mark_hedge_open(hedge_symbol, {
-            'primary_symbols': payload['primary_symbols'],
-            'target_value': payload['target_value'],
-            'reasons': payload['reasons'],
-            'execution': execution.to_dict(),
-        })
-        reports.append({
-            'symbol': hedge_symbol,
-            'name': 'hedge',
-            'price': hedge_snapshot.price,
-            'triggered': 'hedge_open',
-            'hedge_for': payload['primary_symbols'],
-            'execution': execution.to_dict(),
-        })
+    if not _market_is_open():
+        reports.append({'symbol': inverse_symbol, 'name': '인버스 헤지', 'price': inverse_snapshot.price, 'triggered': 'market_closed', 'market_regime': regime.to_dict(), 'target_inverse_value': target_inverse_value, 'target_inverse_qty': inverse_target_qty, 'current_inverse_qty': inverse_current_qty})
+    else:
+        if regime.regime == 'bullish' and inverse_current_qty > 0:
+            close_plan = TradePlan(symbol=inverse_symbol, signal='sell', quantity=inverse_current_qty, entry_price=inverse_snapshot.price, stop_loss=None, take_profit=None, confidence=0.99, rationale=['시장 강세라 인버스 청산'])
+            execution = execute_trade_plan(close_plan, broker=broker)
+            state.mark_hedge_closed(inverse_symbol)
+            reports.append({'symbol': inverse_symbol, 'name': '인버스 헤지', 'price': inverse_snapshot.price, 'triggered': 'inverse_close_bullish', 'market_regime': regime.to_dict(), 'execution': execution.to_dict()})
+        elif regime.regime in {'bearish', 'neutral'}:
+            if inverse_target_qty > inverse_current_qty:
+                buy_qty = inverse_target_qty - inverse_current_qty
+                hedge_plan = build_hedge_plan(hedge_symbol=inverse_symbol, target_value=buy_qty * inverse_snapshot.price, hedge_snapshot=inverse_snapshot, reasons=[('시장 약세 인버스 확대' if regime.regime == 'bearish' else '중립 인버스 소액 유지')] + regime.trigger_reasons)
+                hedge_plan.quantity = buy_qty
+                execution = execute_trade_plan(hedge_plan, broker=broker)
+                state.mark_hedge_open(inverse_symbol, {'market_regime': regime.to_dict(), 'target_inverse_value': target_inverse_value, 'target_inverse_qty': inverse_target_qty, 'execution': execution.to_dict()})
+                reports.append({'symbol': inverse_symbol, 'name': '인버스 헤지', 'price': inverse_snapshot.price, 'triggered': 'inverse_buy', 'market_regime': regime.to_dict(), 'execution': execution.to_dict()})
+            elif inverse_target_qty < inverse_current_qty:
+                sell_qty = inverse_current_qty - inverse_target_qty
+                close_plan = TradePlan(symbol=inverse_symbol, signal='sell', quantity=sell_qty, entry_price=inverse_snapshot.price, stop_loss=None, take_profit=None, confidence=0.99, rationale=['인버스 비중 축소'])
+                execution = execute_trade_plan(close_plan, broker=broker)
+                reports.append({'symbol': inverse_symbol, 'name': '인버스 헤지', 'price': inverse_snapshot.price, 'triggered': 'inverse_trim', 'market_regime': regime.to_dict(), 'execution': execution.to_dict()})
+            else:
+                reports.append({'symbol': inverse_symbol, 'name': '인버스 헤지', 'price': inverse_snapshot.price, 'triggered': None, 'market_regime': regime.to_dict(), 'target_inverse_value': target_inverse_value, 'target_inverse_qty': inverse_target_qty, 'current_inverse_qty': inverse_current_qty})
 
-    active_hedges = dict(state.data.get('hedges') or {})
-    for hedge_symbol, hedge_state in active_hedges.items():
-        if hedge_symbol in desired_hedges:
-            continue
-        if hedge_symbol not in held_symbols:
-            state.mark_hedge_closed(hedge_symbol)
-            continue
-        if not _market_is_open():
-            continue
-        hedge_item = holdings_by_symbol.get(hedge_symbol) or {}
-        qty_raw = hedge_item.get('hldg_qty') or hedge_item.get('quantity') or hedge_item.get('qty') or 0
-        try:
-            qty = int(float(str(qty_raw).replace(',', '').strip()))
-        except Exception:
-            qty = 0
-        if qty <= 0:
-            state.mark_hedge_closed(hedge_symbol)
-            continue
-        close_snapshot = collector.fetch_snapshot(hedge_symbol)
-        close_plan = TradePlan(
-            symbol=hedge_symbol,
-            signal='sell',
-            quantity=qty,
-            entry_price=close_snapshot.price,
-            stop_loss=None,
-            take_profit=None,
-            confidence=0.99,
-            rationale=['hedge unwind'],
-        )
-        execution = execute_trade_plan(close_plan, broker=broker)
-        state.mark_hedge_closed(hedge_symbol)
-        reports.append({
-            'symbol': hedge_symbol,
-            'name': 'hedge',
-            'price': close_snapshot.price,
-            'triggered': 'hedge_close',
-            'execution': execution.to_dict(),
-            'hedge_state': hedge_state,
-        })
+    if os.getenv('AI_TRADING_ENABLE_NAME_HEDGE_MAP', '0') == '1':
+        from app.hedge import load_hedge_map, resolve_hedge_symbol
+        hedge_map = load_hedge_map()
+        for rule in rules:
+            hedge_symbol = resolve_hedge_symbol(rule.symbol, hedge_map, rule.name)
+            if hedge_symbol and hedge_symbol != rule.symbol:
+                reports.append({'symbol': rule.symbol, 'name': rule.name, 'mapped_hedge_symbol': hedge_symbol, 'note': 'name hedge map enabled'})
 
     state.data['last_run_at'] = datetime.now(timezone.utc).isoformat()
     state.save()

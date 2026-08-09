@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import base64
 import binascii
 import os
 import secrets
+from pathlib import Path
 from datetime import datetime, timezone
 from time import monotonic
 from typing import Any
@@ -36,6 +38,7 @@ from collector.kis import KISLiveCollector, build_collector_from_env
 
 DB_PATH = os.getenv('AI_TRADING_DB_PATH', 'data/ai-trading.db')
 PORTFOLIO_PATH = os.getenv('AI_TRADING_PORTFOLIO_PATH', 'data/portfolio.json')
+WATCHDOG_STATE_PATH = Path(os.getenv('AI_TRADING_WATCHDOG_STATE', 'data/watchdog_state.json'))
 KIS_ACCOUNT_NO = os.getenv('KIS_ACCOUNT_NO', '').strip() or None
 BASIC_AUTH_USER = os.getenv('AI_TRADING_BASIC_AUTH_USER', 'admin').strip() or 'admin'
 BASIC_AUTH_PASSWORD = os.getenv('AI_TRADING_BASIC_AUTH_PASSWORD', '').strip()
@@ -145,6 +148,17 @@ def _portfolio_view(source: str = 'auto', force_refresh: bool = False) -> Portfo
     return PortfolioSummaryResponse.model_validate(summary.to_dict())
 
 
+def _load_watchdog_market_regime() -> dict[str, Any] | None:
+    if not WATCHDOG_STATE_PATH.exists():
+        return None
+    try:
+        payload = json.loads(WATCHDOG_STATE_PATH.read_text(encoding='utf-8'))
+    except Exception:
+        return None
+    regime = payload.get('market_regime') if isinstance(payload, dict) else None
+    return regime if isinstance(regime, dict) else None
+
+
 @app.get('/', response_class=HTMLResponse)
 def dashboard() -> HTMLResponse:
     return HTMLResponse(dashboard_html())
@@ -177,6 +191,7 @@ def status() -> dict[str, Any]:
         'portfolio_live_enabled': _live_portfolio_available(),
         'strategy_profile': app.state.strategy_state.strategy_profile,
         'position_multiplier': app.state.strategy_state.position_multiplier,
+        'market_regime': _load_watchdog_market_regime(),
         'db_path': str(app.state.store.path),
         'portfolio_path': str(app.state.portfolio.path),
         'account_no_configured': bool(KIS_ACCOUNT_NO),
