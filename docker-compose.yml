@@ -10,6 +10,7 @@ services:
       AI_TRADING_DB_PATH: ${AI_TRADING_DB_PATH:-/app/data/ai-trading.db}
       AI_TRADING_PORTFOLIO_PATH: ${AI_TRADING_PORTFOLIO_PATH:-/app/data/portfolio.json}
       AI_TRADING_PORTFOLIO_JSON: ${AI_TRADING_PORTFOLIO_JSON:-}
+      AI_TRADING_ENABLE_LIVE_ORDERS: ${AI_TRADING_ENABLE_LIVE_ORDERS:-0}
       KIS_ENABLE_LIVE: ${KIS_ENABLE_LIVE:-0}
       KIS_BASE_URL: ${KIS_BASE_URL:-https://openapivts.koreainvestment.com:29443}
       KIS_APP_KEY: ${KIS_APP_KEY:-}
